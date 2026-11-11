@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "component": "pactiqo-adapter",
+  "version": "0.2.132",
+  "platform": "win32-x64",
+  "entrypoint": "Adapter.exe",
+  "files": [
+    {
+      "path": "Adapter.exe",
+      "sha256": "40d3f367c2ab150370ef9cc129c06ae00b9bdafdd68bb7f26fc7686f641b1354"
+    },
+    {
+      "path": "resources/app.asar",
+      "sha256": "6c511bc7f06315ad94034b542492a60f7d40f1812f1219419e3f660b73269441"
+    },
+    {
+      "path": "resources/mcp.cjs",
+      "sha256": "d17953d7ebfd006123ac18171388dfc08db3a8dd870bb1ecde90ce092687cb33"
+    },
+    {
+      "path": "resources/node.exe",
+      "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"
+    }
+  ],
+  "distribution": "D:/PACTIQO/Builds/Adapter/0.2.132/win-unpacked",
+  "profile": {
+    "mode": "explicit isolated --profile-dir",
+    "copyPersonalState": false,
+    "copyOwnerBinding": false
+  },
+  "client": {
+    "module": "client.cjs",
+    "backendOnly": true,
+    "browserAccess": false,
+    "readiness": "readiness()",
+    "submit": "submit({requestId,text,parentRequestId})",
+    "result": "result(requestId)"
+  },
+  "productionReady": false,
+  "missing": [
+    "client Codex installation/login acceptance",
+    "real CRM workflow and external delivery acceptance"
+  ],
+  "profileIsolation": true,
+  "scopedCapability": true,
+  "cleanProfileEvidence": "D:/PACTIQO/Builds/Adapter/0.2.130/clean-profile-evidence.json",
+  "onboarding": "adapter_client_onboarding",
+  "analysisOnly": true
+}
