@@ -8,7 +8,7 @@ Install payload is the complete verified win-unpacked folder from0.2.128; manife
 
 Tests: node --test integrations/platform-client/client.test.cjs. Synthetic RPC only, no provider messages and no real Codex. Caller must supply a trusted backend RPC binding for its isolated client profile. This artifact intentionally does not read the current owner's bridge config and does not claim the bot queue.
 
-Contracts: submit requestId is UUID; text1..8000; parentRequestId must have answered status in client ledger. Return state accepted is not completion. result status answered is an assistant answer, not an external send receipt. No mouse fallback. Production connector readiness remains false in manifest until capability/profile/lifecycle gaps are implemented.
+Contracts: submit requestId is UUID; text1..24000 (analysis-only; total JSON transport limit 65536 UTF-8 bytes); parentRequestId must have answered status in client ledger. Return state accepted is not completion. result status answered is an assistant answer, not an external send receipt. No mouse fallback. Production connector readiness remains false in manifest until capability/profile/lifecycle gaps are implemented.
 
 ### Проверенная production-изоляция 0.2.129
 Запуск отдельного клиента: `Adapter.exe --profile-dir "D:\PACTIQO\ClientProfiles\<client>" --start-hidden` либо ADAPTER_PROFILE_DIR. Путь должен быть абсолютным и отличаться от личного default-профиля. userData/sessionData и singleton раздельные; перезапуск сохраняет параметры. Автоматическое обновление по личному локальному каталогу в таком профиле отключено: обновлением управляет клиентский установщик.

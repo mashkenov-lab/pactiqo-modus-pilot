@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "component": "pactiqo-adapter",
-  "version": "0.2.132",
+  "version": "0.2.136",
   "platform": "win32-x64",
   "entrypoint": "Adapter.exe",
   "files": [
     {
       "path": "Adapter.exe",
-      "sha256": "40d3f367c2ab150370ef9cc129c06ae00b9bdafdd68bb7f26fc7686f641b1354"
+      "sha256": "67dda055b63bbaa025e0d05e579429a5399a34f4285ce012ec0910f48d8214c9"
     },
     {
       "path": "resources/app.asar",
-      "sha256": "6c511bc7f06315ad94034b542492a60f7d40f1812f1219419e3f660b73269441"
+      "sha256": "915e799277b6bc0c809ef49a24c2e70813da09681f4800a0704deda1cdfbf1ee"
     },
     {
       "path": "resources/mcp.cjs",
@@ -22,7 +22,7 @@
       "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"
     }
   ],
-  "distribution": "D:/PACTIQO/Builds/Adapter/0.2.132/win-unpacked",
+  "distribution": "D:/PACTIQO/Builds/Adapter/0.2.136/win-unpacked",
   "profile": {
     "mode": "explicit isolated --profile-dir",
     "copyPersonalState": false,
@@ -34,7 +34,9 @@
     "browserAccess": false,
     "readiness": "readiness()",
     "submit": "submit({requestId,text,parentRequestId})",
-    "result": "result(requestId)"
+    "result": "result(requestId)",
+    "maxTextLength": 24000,
+    "transportMaxBytes": 65536
   },
   "productionReady": false,
   "missing": [
@@ -45,5 +47,9 @@
   "scopedCapability": true,
   "cleanProfileEvidence": "D:/PACTIQO/Builds/Adapter/0.2.130/clean-profile-evidence.json",
   "onboarding": "adapter_client_onboarding",
-  "analysisOnly": true
+  "analysisOnly": true,
+  "ownerAttach": {
+    "space": "modus-platform",
+    "mode": "analysis-only"
+  }
 }
