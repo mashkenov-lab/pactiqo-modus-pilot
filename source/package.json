@@ -1,0 +1,13 @@
+{
+  "name": "pactiqo-modus-feedback-r4",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Локальная платформа обратной связи сотрудников для Модус Трейд",
+  "scripts": {
+    "start": "node platform-server.cjs",
+    "test": "node --test tests/workflow.test.cjs tests/communications.test.cjs tests/platform.test.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,43 @@
+'use strict';
+// R3: an isolated demonstration inbox. No provider webhook or delivery is simulated as real.
+const {FeedbackStore,people}=require('./domain.cjs');
+const {randomUUID,createHash}=require('node:crypto');
+const stages={new:'Новый',contact:'Контакт установлен',proposal:'Предложение',won:'Выигран',lost:'Закрыт без сделки'};
+function fail(message,status=400){throw Object.assign(Error(message),{status});}
+function text(v,label,max=4000){if(typeof v!=='string'||!v.trim()||v.length>max)fail('Проверьте поле «'+label+'»');return v.trim();}
+function date(v){if(typeof v!=='string'||!/(Z|[+-]\d\d:\d\d)$/.test(v)||!Number.isFinite(Date.parse(v)))fail('Укажите дату и часовой пояс');return new Date(v).toISOString();}
+function suggest(body){const staff=/склад|сотрудник|смен|упаковк|проход|оборудован|неудоб|предлагаю/i.test(body),sale=/купить|заказать|стоимость|цен[ау]|коммерческ|поставк|клиент/i.test(body);return {type:staff&&!sale?'case':sale&&!staff?'lead':'review',title:body.split(/[.!?\n]/)[0].slice(0,160),explanation:'Подсказка по ключевым словам. Тип и следующий шаг подтверждает человек.',engine:'local_rules',reviewRequired:true};}
+class CommunicationsStore extends FeedbackStore {
+ constructor(dir){super(dir);if(!this.state.modus.communications){this.state.modus.communications={inbox:{},events:{},leads:{},outbox:{}};super.save();}}
+ get comm(){return this.state.modus.communications;}
+ canMessage(msg,a){if(a.role==='manager')return true;if(a.role==='employee')return msg.senderId===a.id;if(msg.senderId===null)return !msg.entityId||this.comm.leads[msg.entityId]?.ownerId===a.id;const c=this.state.modus.cases[msg.entityId];return c?this.visible(c,a):false;}
+ message(id,a){const m=this.comm.inbox[id];if(!m||!this.canMessage(m,a))fail('Сообщение недоступно',404);return m;}
+ ingestDemo(a,input){
+  const eventId=text(input.eventId,'ID события',120),body=text(input.body,'Сообщение'),kind=input.senderKind;
+  if(!['employee','customer'].includes(kind))fail('Выберите отправителя');
+  if(a.role==='employee'&&kind!=='employee')fail('Клиентский вход доступен ответственной роли',403);
+  if(a.role==='owner'&&kind==='employee')fail('Тестовое сообщение сотрудника создаёт сотрудник или руководитель',403);
+  const senderId=kind==='employee'?(a.role==='employee'?a.id:'employee'):null;
+  const senderName=senderId?people[senderId].name:text(input.senderName,'Контакт',120);
+  const normalized={body,senderId,senderName,source:'WhatsApp · учебный вход'};
+  const hash=createHash('sha256').update(JSON.stringify(normalized)).digest('hex'),key=a.id+':'+eventId,known=this.comm.events[key];
+  if(known){if(known.hash!==hash)fail('ID события уже использован с другим содержимым',409);return {...structuredClone(this.message(known.id,a)),duplicate:true};}
+  return this.atomic(()=>{const id=randomUUID(),m={id,eventId,receivedAt:new Date().toISOString(),...normalized,suggestion:suggest(body),status:'review',entityType:null,entityId:null,revision:1,demo:true,providerVerified:false};this.comm.inbox[id]=m;this.comm.events[key]={id,hash};return m;});
+ }
+ route(a,id,input){const msg=this.message(id,a);if(msg.entityId)fail('Сообщение уже связано с карточкой',409);if(msg.revision!==input.revision)fail('Сообщение изменилось. Обновите очередь.',409);const type=input.type,title=text(input.title,'Тема',180);
+  if(type==='case'){
+   if(!msg.senderId)fail('Для обращения сотрудника нужна подтверждённая связь с сотрудником');
+   if(a.id!==msg.senderId&&a.role!=='manager')fail('Маршрут подтверждает автор или руководитель',403);
+   return this.atomic(()=>{const c=this.create(people[msg.senderId],{title,description:msg.body,department:input.department,category:input.category,key:'inbox-'+msg.id});const stored=this.state.modus.cases[c.taskId];stored.source=msg.source;stored.messageId=msg.id;this.history(stored,a,'routed','Исходное сообщение связано с обращением. Учебный вход подтверждён человеком.');msg.entityId=c.taskId;msg.entityType='case';msg.status='routed';msg.revision++;return this.row(stored);});
+  }
+  if(type!=='lead')fail('Выберите обращение или лид');if(a.role==='employee'||msg.senderId)fail('Клиентский лид создаётся из клиентского запроса ответственной ролью',403);
+  const nextStep=text(input.nextStep,'Следующий шаг',500),dueAt=date(input.dueAt);
+  return this.atomic(()=>{const task=this.task({title:nextStep,dueAt,source:'CRM · '+msg.senderName}),id=randomUUID(),lead={id,number:'LD-'+String(Object.keys(this.comm.leads).length+1).padStart(4,'0'),title,contact:msg.senderName,source:msg.source,messageId:msg.id,taskId:task.id,stage:'new',ownerId:'owner',nextStep,dueAt,revision:1,createdAt:new Date().toISOString(),history:[{at:new Date().toISOString(),actor:a.name,body:'Лид создан из исходного сообщения. Назначен следующий шаг: '+nextStep}]};this.comm.leads[id]=lead;msg.entityId=id;msg.entityType='lead';msg.status='routed';msg.revision++;return lead;});
+ }
+ lead(id,a){const l=this.comm.leads[id];if(!l||a.role==='employee'||(a.role!=='manager'&&l.ownerId!==a.id))fail('Лид недоступен',404);return l;}
+ leadAction(a,id,input){const l=this.lead(id,a);if(l.revision!==input.revision)fail('Лид изменился. Обновите карточку.',409);const body=text(input.body,'Комментарий');if(input.action==='note')return this.atomic(()=>{l.history.push({at:new Date().toISOString(),actor:a.name,body});l.revision++;return l;});if(input.action!=='update'||!stages[input.stage])fail('Неизвестное действие');const closed=['won','lost'].includes(input.stage),nextStep=closed?'':text(input.nextStep,'Следующий шаг',500),dueAt=closed?l.dueAt:date(input.dueAt);return this.atomic(()=>{const t=this.state.tasks.find(t=>t.id===l.taskId);this.update(t.id,{expectedRevision:t.revision,title:closed?l.nextStep:nextStep,dueAt,status:closed?'done':'open'});l.stage=input.stage;l.nextStep=nextStep;l.dueAt=dueAt;l.revision++;l.history.push({at:new Date().toISOString(),actor:a.name,body:stages[l.stage]+'. '+body+(nextStep?' Следующий шаг: '+nextStep:'')});return l;});}
+ comment(a,id,input){const c=this.get(id,a),t=this.state.tasks.find(t=>t.id===id);if(c.phase==='draft')fail('Сначала проверьте черновик');if(input.revision!==t.revision)fail('Карточка изменилась',409);const body=text(input.body,'Сообщение');return this.atomic(()=>{this.update(id,{expectedRevision:t.revision,status:t.status});this.history(c,a,'comment',body);return this.row(c);});}
+ prepareReply(a,input){if(a.role==='employee')fail('Ответ в канал готовит ответственная роль',403);const m=this.message(input.messageId,a),body=text(input.body,'Ответ'),key=text(input.key,'Ключ запроса',120);if(!m.entityId)fail('Сначала создайте связанную карточку');const known=Object.values(this.comm.outbox).find(x=>x.key===key&&x.actorId===a.id);if(known){if(known.body!==body||known.messageId!==m.id)fail('Ключ уже использован',409);return structuredClone(known);}return this.atomic(()=>{const r={id:randomUUID(),key,actorId:a.id,messageId:m.id,entityType:m.entityType,entityId:m.entityId,recipient:m.senderName,body,at:new Date().toISOString(),status:'blocked_no_channel',providerMessageId:null,deliveryVerified:false};this.comm.outbox[r.id]=r;return r;});}
+ snapshot(a){const base=super.snapshot(a),inbox=Object.values(this.comm.inbox).filter(m=>this.canMessage(m,a)),leads=Object.values(this.comm.leads).filter(l=>a.role==='manager'||(a.role==='owner'&&l.ownerId===a.id)).map(l=>({...l,taskStatus:this.state.tasks.find(t=>t.id===l.taskId)?.status}));return {...base,communications:{inbox:structuredClone(inbox),leads:structuredClone(leads),stages,outbox:Object.values(this.comm.outbox).filter(r=>inbox.some(m=>m.id===r.messageId)),channel:{status:'not_connected',label:'WhatsApp · нет подключения к этому MVP',detail:'Вход демонстрируется локально. Исходящие сохранены как черновики; отправка провайдеру не выполняется.'},metrics:{waiting:inbox.filter(m=>!m.entityId).length,leadsOpen:leads.filter(l=>!['won','lost'].includes(l.stage)).length,leadOverdue:leads.filter(l=>!['won','lost'].includes(l.stage)&&Date.parse(l.dueAt)<Date.now()).length}},release:'R3'};}
+}
+module.exports={CommunicationsStore,suggest,stages};
