@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "component": "pactiqo-adapter",
-  "version": "0.2.136",
+  "version": "0.2.138",
   "platform": "win32-x64",
   "entrypoint": "Adapter.exe",
   "files": [
     {
       "path": "Adapter.exe",
-      "sha256": "67dda055b63bbaa025e0d05e579429a5399a34f4285ce012ec0910f48d8214c9"
+      "sha256": "44cb7fc44140b4b2aea7d178a51a17d8dfb26f33986484c54ee7feebd5809c53"
     },
     {
       "path": "resources/app.asar",
-      "sha256": "915e799277b6bc0c809ef49a24c2e70813da09681f4800a0704deda1cdfbf1ee"
+      "sha256": "2dd0adaf3a60e4cd2dcef7628301cff4eeb8550890b9ae19c437f0412e7802d6"
     },
     {
       "path": "resources/mcp.cjs",
@@ -22,7 +22,7 @@
       "sha256": "9a4eb5f1c29c6a2e93852ead46b999e284a6a5ca8bab4d4e241d587d025a52de"
     }
   ],
-  "distribution": "D:/PACTIQO/Builds/Adapter/0.2.136/win-unpacked",
+  "distribution": "D:/PACTIQO/Builds/Adapter/0.2.138/win-unpacked",
   "profile": {
     "mode": "explicit isolated --profile-dir",
     "copyPersonalState": false,
@@ -51,5 +51,14 @@
   "ownerAttach": {
     "space": "modus-platform",
     "mode": "analysis-only"
+  },
+  "messaging": {
+    "module": "messaging.cjs",
+    "capability": "adapter_messaging_capability",
+    "space": "modus-platform",
+    "setup": "MESSAGING_SETUP.md",
+    "defaultEnabled": false,
+    "ownerTestOnly": true,
+    "liveAcceptance": false
   }
 }

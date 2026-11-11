@@ -4,11 +4,13 @@ const {SuiteStore:PlatformStore,people}=require('./suite-store.cjs');
 const {DeskAnalyzer}=require('./desk-analyzer.cjs');
 const {BitrixConnector}=require('./bitrix-connector.cjs');
 const {LocalAuth}=require('./platform-auth.cjs');
+const {MessengerWorkflow}=require('./messenger-workflow.cjs');
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 function csv(rows){const cell=v=>'"'+(/^[=+@\-\t\r]/.test(String(v??''))?'\'':'')+String(v??'').replaceAll('"','""')+'"';return '\ufeff'+rows.map(row=>row.map(cell).join(';')).join('\r\n');}
-function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS_R4_DATA_DIR||path.join(__dirname,'data-r5'),seed=process.env.MODUS_DEMO!=='0',passwords,analyzer,bitrixOptions,adapter}={}){
+function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS_R4_DATA_DIR||path.join(__dirname,'data-r5'),seed=process.env.MODUS_DEMO!=='0',passwords,analyzer,bitrixOptions,adapter,messaging}={}){
  const store=new PlatformStore(dir);if(seed)store.seedDataset();const auth=new LocalAuth(dir,{passwords});
  analyzer||=new DeskAnalyzer({dir});if(!adapter&&process.env.MODUS_ADAPTER_PROFILE)adapter=new (require('./adapter-link.cjs').AdapterLink)({profile:process.env.MODUS_ADAPTER_PROFILE,dir,executable:process.env.MODUS_ADAPTER_EXE,codexExecutable:process.env.MODUS_CODEX_EXE});const bitrix=new BitrixConnector(store,bitrixOptions);
+ const messenger=new MessengerWorkflow({store,analysis:adapter,transport:messaging||adapter?.messaging});
  const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value));};
  const server=http.createServer(async(req,res)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');try{
   if(!/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(req.headers.host||''))fail('Доступ разрешён только на этом компьютере',403);
@@ -21,7 +23,10 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
   if(post&&p==='/api/login'){const r=auth.login(body.actor,body.password,token);res.setHeader('Set-Cookie','modus_r5='+r.token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800');return json(res,200,{actor:r.actor});}
   if(p.startsWith('/api/')){if(!a)fail('Войдите в учётную запись',401);
    if(post&&p==='/api/logout'){auth.logout(token);res.setHeader('Set-Cookie','modus_r5=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,200,{ok:true});}
-   if(req.method==='GET'&&p==='/api/state')return json(res,200,store.snapshot(a));
+   if(req.method==='GET'&&p==='/api/state')return json(res,200,{...store.snapshot(a),messenger:messenger.snapshot(a)});
+   if(req.method==='GET'&&p==='/api/messaging')return json(res,200,await messenger.status(a));
+   if(post&&p==='/api/messaging/config')return json(res,200,messenger.configure(a,body));
+   if(post&&p==='/api/messaging/check'){if(!a.admin)fail('Очередью управляет администратор',403);void messenger.tick();return json(res,200,{checking:true});}
    if(req.method==='GET'&&p==='/api/readiness')return json(res,200,{desk:await analyzer.status(),adapter:adapter?await adapter.readiness():{ready:false,label:'Адаптер не связан с этим профилем'}});
    if(req.method==='GET'&&p==='/api/integrations/bitrix')return json(res,200,bitrix.status(a));
    const conv=p.match(/^\/api\/conversations\/([a-f0-9-]+)(?:\/(message|analyze|confirm|analysis-result|abandon-analysis))?$/);
@@ -46,9 +51,10 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
     const m=p.match(/^\/api\/(cases|inbox|leads|notifications)\/([a-f0-9-]+)\/(action|comment|attachments|handoff|route|read)$/);if(m){const [,kind,id,action]=m;if(kind==='cases'){const methods={action:'act',comment:'comment',attachments:'attach',handoff:'handoff'};if(methods[action])return json(res,200,store[methods[action]](a,id,body));}if(kind==='inbox'&&action==='route')return json(res,200,store.route(a,id,body));if(kind==='leads'&&action==='action')return json(res,200,store.leadAction(a,id,body));if(kind==='notifications'&&action==='read')return json(res,200,store.readNotification(a,id));}
    }fail('Действие не найдено',404);
   }
-  const assets={'/':['index.html','text/html'],'/app.js':['app.js','text/javascript'],'/suite.js':['suite.js','text/javascript'],'/chat-ui.js':['chat-ui.js','text/javascript'],'/styles.css':['styles.css','text/css'],'/demo-desk.json':['demo-desk.json','application/json']};const asset=assets[p];if(req.method==='GET'&&asset){res.writeHead(200,{'Content-Type':asset[1]+'; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});return res.end(fs.readFileSync(path.join(__dirname,p==='/demo-desk.json'?'public':'r4-public',asset[0])));}fail('Страница не найдена',404);
+  const assets={'/':['index.html','text/html'],'/app.js':['app.js','text/javascript'],'/suite.js':['suite.js','text/javascript'],'/chat-ui.js':['chat-ui.js','text/javascript'],'/messenger-ui.js':['messenger-ui.js','text/javascript'],'/styles.css':['styles.css','text/css'],'/demo-desk.json':['demo-desk.json','application/json']};const asset=assets[p];if(req.method==='GET'&&asset){res.writeHead(200,{'Content-Type':asset[1]+'; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});return res.end(fs.readFileSync(path.join(__dirname,p==='/demo-desk.json'?'public':'r4-public',asset[0])));}fail('Страница не найдена',404);
  }catch(e){const status=e.status||(e.code==='STORE_CONFLICT'?409:400);if(!res.headersSent)json(res,status,{error:e.message});else res.end();}});
- return {server,store,auth,analyzer,bitrix};
+ server.once('listening',()=>messenger.start());server.once('close',()=>messenger.stop());
+ return {server,store,auth,analyzer,bitrix,messenger};
 }
 if(require.main===module){const {server}=createPlatformServer(),port=Number(process.env.MODUS_PORT||process.env.MODUS_R4_PORT||4389);server.listen(port,'127.0.0.1',()=>console.log('PACTIQO MODUS R5: http://127.0.0.1:'+port));server.on('error',e=>{console.error(e.message);process.exitCode=1;});}
 module.exports={createPlatformServer,csv};
