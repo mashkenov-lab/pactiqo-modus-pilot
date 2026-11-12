@@ -33,7 +33,7 @@ function members(store, item) {
   });
 }
 function fingerprint(store, info, room) {
-  return hash({caseRevision:info.task.revision, roomRevision:room.revision, members:members(store,info.item), actor:{id:info.person.id,role:info.person.role,revision:info.person.revision}, documents:store.responsibilityContext(info.person,info.item.department), availability:store.platform.availability[info.item.ownerId]});
+  return hash({caseRevision:info.task.revision, roomRevision:room.revision, members:members(store,info.item), actor:{id:info.person.id,role:info.person.role,revision:info.person.revision}, documents:store.responsibilityContext(info.person,info.item.department), availability:store.platform.availability[info.item.ownerId],progressRevision:store.caseProgress(info.person,info.task.id)?.revision||0});
 }
 function buildCaseContext(store, actor, caseId, room) {
   const {person, item, task} = caseInfo(store, actor, caseId);
@@ -43,7 +43,7 @@ function buildCaseContext(store, actor, caseId, room) {
     case:{id:caseId,number:item.number,title:task.title,description:item.description,department:item.department,category:item.category,phase:item.phase,ownerId:item.ownerId,authorId:item.authorId,result:clone(item.resolution),dueAt:task.dueAt},
     actor:{id:person.id,role:person.role}, participants:members(store,item),
     route:{routing:clone(item.routing || null),availability:item.ownerId ? store.platform.availability[item.ownerId] !== false : false},
-    plan:clone(room.plan), messages:history, historyPartial:room.messages.length>history.length,
+    plan:clone(room.plan), progress:store.caseProgress(person,caseId), messages:history, historyPartial:room.messages.length>history.length,
     documents:clone(docs.documents), contextPartial:!!docs.truncated, documentNotice:docs.notice
   };
 }

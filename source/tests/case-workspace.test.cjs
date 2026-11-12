@@ -180,3 +180,14 @@ test('round robin persists across restart and gives pending recovery a turn amid
   assert.equal(room.snapshot(s.author,s.row.taskId).ai.status,'ready');
   assert.equal(room.snapshot(s.author,second.taskId).ai.status,'pending');
 });
+
+test('actual advice and registered intake use only authorized current human progress; edits stale an in-flight result',async()=>{
+ const {CaseAttention}=require('../case-attention.cjs');let finish,captured;const s=setup({analyze:(job,context)=>{captured=context;return new Promise(r=>finish=r);}}),attention=new CaseAttention({store:s.store});
+ const other=s.store.create(s.store.actor('employee2'),{key:'foreign',title:'FOREIGN_TITLE',description:'FOREIGN_DESCRIPTION',department:'Склад',category:'Организация работы'});
+ attention.setProgress(s.store.actor('employee2'),{caseId:other.taskId,body:'FOREIGN_PROGRESS',nextStep:'foreign',blocked:'',checkAt:null,expectedRevision:0});
+ const input={caseId:s.row.taskId,body:'CURRENT_BODY',nextStep:'CURRENT_STEP',blocked:'CURRENT_BLOCK',checkAt:'2030-01-01T00:00:00Z',expectedRevision:0};attention.setProgress(s.author,input);s.store.state.suite.conversations.secret={messages:[{text:'PRIVATE_INTAKE'}]};
+ post(s,s.author);s.room.requestAdvice(s.author,{caseId:s.row.taskId,key:'p',expectedRevision:1});const pending=s.room.processPending();await new Promise(r=>setImmediate(r));
+ assert.deepEqual(captured.progress,{body:'CURRENT_BODY',nextStep:'CURRENT_STEP',blocked:'CURRENT_BLOCK',checkAt:'2030-01-01T00:00:00.000Z',revision:1,actorId:s.author.id,actorName:s.store.people[s.author.id].name,at:attention.state.progress[s.row.taskId].at});const model=JSON.stringify(casePrompt(captured));for(const v of ['CURRENT_BODY','CURRENT_STEP','CURRENT_BLOCK','2030-01-01','employee'])assert.ok(model.includes(v),v);assert.doesNotMatch(model,/FOREIGN_PROGRESS|FOREIGN_TITLE|PRIVATE_INTAKE/);assert.throws(()=>buildCaseContext(s.store,s.store.actor('employee2'),s.row.taskId,s.room.room(s.row.taskId)));
+ const c=s.store.openConversation(s.author,{kind:'employee',key:'desk-progress',body:'Вопрос'});s.store.atomic(()=>{s.store.suite.conversations[c.id].entity={type:'case',id:s.row.taskId};});const desk=s.store.analysisContext(s.author,c.id);assert.deepEqual(desk.registeredEntity.progress,captured.progress);const prompt=require('../desk-analyzer.cjs').prompt(s.store.conversation(s.author,c.id),desk);for(const v of ['CURRENT_BODY','CURRENT_STEP','CURRENT_BLOCK','2030-01-01','employee'])assert.ok(prompt.includes(v),v);assert.doesNotMatch(prompt,/FOREIGN_PROGRESS|FOREIGN_TITLE|PRIVATE_INTAKE/);assert.throws(()=>s.store.analysisContext(s.store.actor('employee2'),c.id));
+ attention.setProgress(s.owner,{...input,body:'CHANGED',expectedRevision:1});finish(advice);await pending;assert.equal(s.room.snapshot(s.author,s.row.taskId).ai.status,'stale');assert.equal(s.room.snapshot(s.author,s.row.taskId).messages.filter(m=>m.role==='assistant').length,0);
+});
