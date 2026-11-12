@@ -64,12 +64,12 @@ class AdapterAuthority {
       const binding = this.state.bindings[grant.bindingId];
       if (!binding?.enabled || payloadHash(binding) !== grant.bindingHash) reject();
       this.store.person(binding.employeeId);
-      if (![item.authorId,item.ownerId].includes(binding.employeeId) && this.store.person(binding.employeeId).role !== 'manager') reject();
+      if (![item.authorId,item.ownerId].includes(binding.employeeId)) {const {curator,cycle}=require('./case-attention.cjs');const policy=this.store.suite.attention?.policy, c=policy&&cycle(this.store,item,policy);if(!c||curator(this.store,c.recipient,policy)!==binding.employeeId)reject();}
       if (grant.action === 'notify') {
         const row = this.store.suite.caseDelivery?.outbox?.[grant.operationId];
         if (!row || !['queued','sending'].includes(row.state) || row.payloadHash !== grant.payloadHash) reject();
         if(row.caseId!==grant.caseId||row.recipientId!==binding.employeeId)reject();
-        try{require('./case-delivery.cjs').currentDeliveryEvent(this.store,row,item);}catch{reject();}
+        try{require('./case-delivery.cjs').currentDeliveryEvent(this.store,row,item,this.now());}catch{reject();}
         if (row.creatorId) this.store.get(grant.caseId,this.store.person(row.creatorId));
       }
     }

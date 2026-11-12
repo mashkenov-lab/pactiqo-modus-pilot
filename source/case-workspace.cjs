@@ -86,9 +86,16 @@ class CaseWorkspace {
     const body=clean(input.body,4000);
     if (!validDate(input.dueAt)) fail('Укажите срок с часовым поясом');
     this.check(room,input.expectedRevision);
+    const dueAt=new Date(input.dueAt).toISOString(), previousDueAt=info.task.dueAt;
+    const reason=dueAt!==previousDueAt?clean(input.reason,2000):null;
     return this.store.atomic(()=>{
+      if(dueAt!==previousDueAt){
+        this.store.update(input.caseId,{expectedRevision:info.task.revision,status:info.task.status,dueAt});
+        this.store.history(info.item,info.person,'deadline_changed',`Срок: ${previousDueAt} → ${dueAt}. Причина: ${reason}`);
+        this.store.notify(info.item,info.person,'deadline_changed');
+      }
       const target=this.ensure(input.caseId), revision=++target.revision;
-      target.plan={body,dueAt:new Date(input.dueAt).toISOString(),approvedBy:info.person.id,approvedAt:this.stamp(),revision};
+      target.plan={body,dueAt,reason,approvedBy:info.person.id,approvedAt:this.stamp(),revision};
       target.events.push({id:randomUUID(),type:'plan_updated',caseId:input.caseId,creatorId:info.person.id,revision,body});
       return clone(target.plan);
     });

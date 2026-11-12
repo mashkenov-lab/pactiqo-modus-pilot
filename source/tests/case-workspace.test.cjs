@@ -39,9 +39,9 @@ test('plan requires owner or supervisor and never changes case lifecycle',()=>{
   const s=setup(), id=s.row.taskId;
   assert.throws(()=>s.room.savePlan(s.author,{caseId:id,body:'Plan',dueAt:'2030-01-01T00:00:00Z',expectedRevision:0}),{status:403});
   const before=s.store.row(s.store.get(id,s.author));
-  s.room.savePlan(s.owner,{caseId:id,body:'Plan',dueAt:'2030-01-01T00:00:00Z',expectedRevision:0});
+  s.room.savePlan(s.owner,{caseId:id,body:'Plan',dueAt:'2030-01-01T00:00:00Z',reason:'Согласован срок',expectedRevision:0});
   const after=s.store.row(s.store.get(id,s.author));
-  assert.equal(after.phase,before.phase); assert.equal(after.dueAt,before.dueAt);
+  assert.equal(after.phase,before.phase); assert.equal(after.dueAt,'2030-01-01T00:00:00.000Z');
   assert.equal(new CaseWorkspace({store:new SuiteStore(s.dir)}).snapshot(s.author,id).plan.body,'Plan');
   let done=s.store.act(s.owner,id,{action:'resolve',revision:after.revision,body:'Сделано',evidence:'Фото'});
   done=s.store.act(s.author,id,{action:'accept',revision:done.revision,body:'Принято'});

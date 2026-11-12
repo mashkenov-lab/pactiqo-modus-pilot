@@ -6,7 +6,8 @@ const humanActions=new Set(['created','assign','publish','start','resolve','decl
 const notificationStamp=n=>payloadHash({id:n.id,caseId:n.caseId,recipient:n.recipient,number:n.number,action:n.action,title:n.title,creatorId:n.creatorId,participants:n.participants,humanEvent:n.humanEvent,resolution:n.resolution});
 // Shared with grant issuance/callback verification: a mutable current case must
 // never replace the exact human event approved for this durable delivery.
-function currentDeliveryEvent(store,row,item){
+function currentDeliveryEvent(store,row,item,now=Date.now()){
+  if(row.eventSource==='attention'){const event=require('./case-attention.cjs').currentAttentionEvent(store,row,now);if(row.payload?.text!==event.body||row.payloadHash!==payloadHash(row.payload))throw Error('Содержимое доставки изменено');return event;}
   const notification=['assignment','notification'].includes(row.eventSource);
   const event=notification?store.platform.notifications.find(n=>n.id===row.eventId&&n.caseId===row.caseId&&n.recipient===row.recipientId):store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
   if(!event)throw Error('Событие недоступно');
@@ -27,9 +28,9 @@ class CaseDelivery {
   id(eventId,recipient,bindingId){return createHash('sha256').update(JSON.stringify([eventId,recipient,bindingId])).digest('hex');}
   current(row){
     const person=this.store.person(row.recipientId),item=this.store.get(row.caseId,person);
-    if(![item.authorId,item.ownerId].includes(person.id))throw Error('Получатель больше не участник');
+    if(row.eventSource!=='attention' && ![item.authorId,item.ownerId].includes(person.id))throw Error('Получатель больше не участник');
     if(row.creatorId)this.store.get(row.caseId,this.store.person(row.creatorId));
-    const event=currentDeliveryEvent(this.store,row,item);
+    const event=currentDeliveryEvent(this.store,row,item,this.now());
     return {person,item,event};
   }
   channel(status, binding) {
@@ -89,16 +90,29 @@ class CaseDelivery {
       this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:pinned?'notification':'assignment',eventAction:note.action,eventStamp:pinned?notificationStamp(note):null,eventBody:note.title,creatorId:note.creatorId||null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:this.channel(status,binding).channel!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};this.state.notificationSeen[note.id]=true;});
     }
   }
+  collectAttention(status){
+    for(const event of Object.values(this.store.suite.attention?.events||{})){
+      let person,item;const probe={eventSource:'attention',eventId:event.id,caseId:event.caseId,recipientId:event.recipientId,eventBody:event.body};
+      try{person=this.store.person(event.recipientId);item=this.store.get(event.caseId,person);require('./case-attention.cjs').currentAttentionEvent(this.store,probe,this.now());}catch{continue;}
+      const binding=this.choose(status,person,(status.bindings||[]).filter(b=>b.employeeId===person.id));
+      const operationId=this.id(event.id,person.id,binding?.bindingId||'unbound');
+      if(this.state.outbox[operationId]||Object.values(this.state.outbox).some(o=>o.eventId===event.id&&!['unsupported','cancelled','failed-before-send'].includes(o.state)))continue;
+      if(!binding){this.store.atomic(()=>{this.state.outbox[operationId]={...probe,operationId,state:'unsupported',reason:'no_verified_binding'};});continue;}
+      const payload={caseId:event.caseId,bindingId:binding.bindingId,operationId,kind:'result',text:event.body};
+      this.store.atomic(()=>{this.state.outbox[operationId]={...probe,operationId,bindingId:binding.bindingId,channelId:binding.channelId,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+    }
+  }
   async tick(){
     if(this.busy)return;this.busy=true;
     try{
-      const status=await this.transport.status();this.authority.updateBindings(status);this.collect(status);this.collectAssignments(status);
+      const status=await this.transport.status();this.authority.updateBindings(status);this.collect(status);this.collectAssignments(status);this.collectAttention(status);
       for(const copy of Object.values(this.state.outbox)){
         if(terminal.has(copy.state))continue;
         const id=copy.operationId;
         if(copy.state==='unknown'||copy.state==='accepted'){
           try{const r=await this.transport.receipt({operationId:id});if(r.operationId===id)this.store.atomic(()=>{const row=this.state.outbox[id];if(row)row.state=r.state;});}catch{}continue;
         }
+        if(copy.eventSource==='attention'&&!require('./case-attention.cjs').working(this.store.suite.attention.policy,this.now()))continue;
         try{
           this.current(copy);
           const binding=status.bindings.find(b=>b.bindingId===copy.bindingId&&b.enabled&&b.employeeId===copy.recipientId);
