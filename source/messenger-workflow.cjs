@@ -28,6 +28,7 @@ class MessengerWorkflow{
  ingest(input){
   const event={};for(const key of ['eventId','messageId','channelId','conversationId','employeeId'])event[key]=text(input[key],key,160);
   if(['__proto__','constructor','prototype'].includes(event.eventId))fail('Некорректный ID события');
+  if(input.transportVersion==='v2'){event.transportVersion='v2';event.bindingId=text(input.bindingId,'bindingId',160);if(event.conversationId!==event.bindingId)fail('Некорректная привязка события',403);}
   if(!['telegram','whatsapp'].includes(input.channel))fail('Неизвестный канал');event.channel=input.channel;event.text=text(input.text,'text',24000);
   const hash=digest(event),old=this.state.events[event.eventId];if(old){if(old.hash!==hash)fail('Повтор события изменён: конфликт идентичности или текста',409);return {...old,duplicate:true};}
   try{this.store.person(event.employeeId);}catch{fail('Отправитель не найден среди сотрудников',403);}
@@ -48,7 +49,7 @@ class MessengerWorkflow{
  command(e,value){const prefix=this.prefix(e);return (prefix?prefix+' ':'')+value;}
  queue(e,body){
   if(body.length>4000)fail('Ответ превышает лимит канала');
-  const operationId=randomUUID();this.state.outbox[operationId]={operationId,eventId:e.eventId,sessionId:e.sessionId,text:body,state:'queued',at:stamp()};return [operationId];
+  const operationId=randomUUID();this.state.outbox[operationId]={operationId,eventId:e.eventId,sessionId:e.sessionId,caseId:e.caseId||this.store.suite.caseAdviceJobs?.[e.caseJobId]?.caseId||null,text:body,state:'queued',at:stamp()};return [operationId];
  }
  complete(e,body){return this.store.atomic(()=>{const current=this.state.events[e.eventId];this.queue(current,body);current.state='completed';current.error=null;return current;});}
  routeStamp(c){return digest({settings:this.store.platform.settingsRevision,route:this.store.routeFor(c.analysis.category),category:c.analysis.category,department:c.analysis.department});}
@@ -64,6 +65,7 @@ class MessengerWorkflow{
  async process(e){
   e=this.state.events[e.eventId];if(!e||!['received','analyzing','case_analyzing'].includes(e.state))return;
   this.providerStatus=await this.transport.status();
+  if(e.transportVersion==='v2'&&this.providerStatus.v2Available===false)return;
   if(!this.providerStatus.bindings?.some(b=>b.enabled&&b.channelId===e.channelId&&b.employeeId===e.employeeId&&b.conversationId===e.conversationId))fail('Привязка сотрудника выключена или изменена',403);
   e=this.state.events[e.eventId];if(!e||!['received','analyzing','case_analyzing'].includes(e.state))return;
   const a=this.store.person(e.employeeId),s=this.state.sessions[e.sessionId];let c=s.localConversationId?this.store.conversation(a,s.localConversationId):null;
@@ -81,11 +83,11 @@ class MessengerWorkflow{
     const find=number=>visible.filter(x=>x.number?.toLowerCase()===number.toLowerCase());
     if(/^мои задачи$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+x.phase).join('\n'):'У вас нет доступных карточек.');}
     const card=body.match(/^карточка\s+(MT-\d+)$/iu);
-    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0];this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;});return this.complete(e,row.number+' · '+row.title+' · '+row.phase+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
+    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0];this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+row.phase+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
     if(/^\/(выход|exit)$/iu.test(body)){this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=null;});return this.complete(e,'Вы вышли из общего обсуждения.');}
     const discussion=body.match(/^обсудить\s+(MT-\d+)\s+([\s\S]+)$/iu);
     const selected=s.selectedCaseId && !discussion && !body.startsWith('/') && !confirmation ? visible.find(x=>x.taskId===s.selectedCaseId) : null;
-    if(discussion||selected){const matches=discussion?find(discussion[1]):[selected];if(matches.length!==1)return this.complete(e,'Карточка не найдена, недоступна или выбор неоднозначен.');const row=matches[0],message=discussion?discussion[2]:body,room=this.workroom.snapshot(a,row.taskId);this.workroom.post(a,{caseId:row.taskId,body:message,key:'messenger-'+e.eventId,expectedRevision:room.revision},{source:e.channel});const updated=this.workroom.snapshot(a,row.taskId);let job;try{job=this.workroom.requestAdvice(a,{caseId:row.taskId,key:'messenger-'+e.eventId,expectedRevision:updated.revision});}catch(error){if(error.status===409)return this.complete(e,'Сообщение сохранено в общем обсуждении. Уже выполняется другой запрос совета.');throw error;}this.store.atomic(()=>{const current=this.state.events[e.eventId];current.state='case_analyzing';current.caseJobId=job.requestId;this.state.sessions[e.sessionId].selectedCaseId=row.taskId;});return;}
+    if(discussion||selected){const matches=discussion?find(discussion[1]):[selected];if(matches.length!==1)return this.complete(e,'Карточка не найдена, недоступна или выбор неоднозначен.');const row=matches[0],message=discussion?discussion[2]:body,room=this.workroom.snapshot(a,row.taskId);this.workroom.post(a,{caseId:row.taskId,body:message,key:'messenger-'+e.eventId,expectedRevision:room.revision},{source:e.channel});const updated=this.workroom.snapshot(a,row.taskId);let job;try{job=this.workroom.requestAdvice(a,{caseId:row.taskId,key:'messenger-'+e.eventId,expectedRevision:updated.revision});}catch(error){if(error.status===409)return this.complete(e,'Сообщение сохранено в общем обсуждении. Уже выполняется другой запрос совета.');throw error;}this.store.atomic(()=>{const current=this.state.events[e.eventId];current.state='case_analyzing';current.caseJobId=job.requestId;current.caseId=row.taskId;this.state.sessions[e.sessionId].selectedCaseId=row.taskId;});return;}
    }
    if(body.length>4000)return this.complete(e,'Сообщение сохранено, но для разбора одного шага нужно не более 4000 символов. Напишите короче основную проблему, место и желаемый результат; затем я уточню детали. Карточка пока не создана.');
    if(confirmation){
@@ -128,7 +130,8 @@ class MessengerWorkflow{
    const operationId=copy.operationId;let receipt;
    try{
     if(copy.state==='queued'){
-     const event=this.state.events[copy.eventId];this.store.person(event.employeeId);const status=await this.transport.status();if(!status.bindings?.some(b=>b.enabled&&b.channelId===event.channelId&&b.employeeId===event.employeeId&&b.conversationId===event.conversationId))throw Error('Привязка отключена');
+     const event=this.state.events[copy.eventId];this.store.person(event.employeeId);const status=await this.transport.status();if(event.transportVersion==='v2'&&status.v2Available===false)continue;if(!status.bindings?.some(b=>b.enabled&&b.channelId===event.channelId&&b.employeeId===event.employeeId&&b.conversationId===event.conversationId))throw Error('Привязка отключена');
+     const freshEvent=this.state.events[copy.eventId],fresh=this.state.outbox[operationId];if(!freshEvent||!fresh||fresh.state!=='queued')continue;const person=this.store.person(freshEvent.employeeId);const caseId=fresh.caseId||freshEvent.caseId||this.store.suite.caseAdviceJobs?.[freshEvent.caseJobId]?.caseId;if(caseId)this.store.get(caseId,person);
      this.store.atomic(()=>{this.state.outbox[operationId].state='sending';});
      receipt=await this.transport.reply({eventId:copy.eventId,operationId,text:copy.text});
     }else receipt=await this.transport.receipt({operationId});

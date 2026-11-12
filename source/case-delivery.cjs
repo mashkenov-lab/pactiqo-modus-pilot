@@ -15,7 +15,7 @@ class CaseDelivery {
     const person=this.store.person(row.recipientId),item=this.store.get(row.caseId,person);
     if(![item.authorId,item.ownerId].includes(person.id))throw Error('Получатель больше не участник');
     if(row.creatorId)this.store.get(row.caseId,this.store.person(row.creatorId));
-    const event=row.eventSource==='assignment'?this.store.platform.notifications.find(n=>n.id===row.eventId&&n.action==='assigned'&&n.recipient===row.recipientId):this.store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
+    const event=row.eventSource==='assignment'?this.store.platform.notifications.find(n=>n.id===row.eventId&&['created','assign'].includes(n.action)&&n.recipient===row.recipientId):this.store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
     if(!event || (row.eventSource==='assignment'?event.title:event.body)!==row.eventBody || (row.eventSource==='assignment'&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
     return {person,item,event};
   }
@@ -48,7 +48,7 @@ class CaseDelivery {
   collectAssignments(status){
     const all=this.store.platform.notifications;
     for(const note of all.filter(n=>!this.state.notificationSeen[n.id])){
-      if(note.action!=='assigned')continue;
+      if(!['created','assign'].includes(note.action))continue;
       let person,item;try{person=this.store.person(note.recipient);item=this.store.get(note.caseId,person);}catch{continue;}
       if(item.ownerId!==person.id)continue;
       const choices=(status.bindings||[]).filter(b=>b.enabled&&b.employeeId===person.id);

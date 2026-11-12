@@ -2,6 +2,8 @@ class MessagingV2Client{
  constructor({rpc}){if(typeof rpc!=='function')throw Error('MESSAGING_RPC_REQUIRED');this.rpc=rpc;}
  status(){return this.rpc('adapter_messaging_v2_status',{});}
  poll(p={}){return this.rpc('adapter_messaging_v2_poll',p);}
+ ack(p){return this.rpc('adapter_messaging_v2_ack',p);}
+ reply(p){return this.rpc('adapter_messaging_v2_reply',p);}
  receipt(p){return this.rpc('adapter_messaging_v2_receipt',p);}
  prepareBinding(p){return this.rpc('adapter_messaging_v2_binding_prepare',p);}
  bindingProof(p){return this.rpc('adapter_messaging_v2_binding_proof',p);}
