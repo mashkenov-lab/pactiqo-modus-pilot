@@ -11,8 +11,11 @@ const text=(v,label,max)=>{if(typeof v!=='string'||!v.trim()||Array.from(v).leng
 class MessengerWorkflow{
  constructor({store,analysis,transport,workroom,cardLinkFor,now=()=>Date.now()}){
   Object.assign(this,{store,analysis,transport,workroom,cardLinkFor,now,busy:false,timer:null,lastError:null,providerStatus:null});
+  this.inFlight=new Map();this.controlFlight=new Map();
   if(!store.suite.messaging)store.atomic(()=>{store.suite.messaging={schema:1,enabled:false,events:{},sessions:{},outbox:{}};});
-  if(!this.state.rejected)store.atomic(()=>{this.state.rejected={};});
+  if(!this.state.rejected||!this.state.progress)store.atomic(()=>{this.state.rejected||={};this.state.progress||={};});
+  this.progressBusy=false;this.flushBusy=false;
+  if(Object.values(this.state.progress).some(x=>x.state==='sending'))store.atomic(()=>{for(const op of Object.values(this.state.progress))if(op.state==='sending')op.state='unknown';});
   // Migration only touches the local pilot ledger; provider events keep their IDs.
   store.atomic(()=>{let sequence=0;for(const e of Object.values(this.state.events)){e.msgKey=digest([e.channelId,e.channel,e.conversationId,e.messageId]);e.sequence||=++sequence;sequence=Math.max(sequence,e.sequence);}this.state.sequence=Math.max(sequence,this.state.sequence||0);});
   if(Object.values(this.state.outbox).some(x=>x.state==='sending'))store.atomic(()=>{for(const o of Object.values(this.state.outbox))if(o.state==='sending')o.state='unknown';});
@@ -22,10 +25,11 @@ class MessengerWorkflow{
  snapshot(a){
   const sessions=Object.values(this.state.sessions).filter(s=>a.admin||s.employeeId===a.id).map(s=>({id:s.id,employeeId:s.employeeId,channel:s.channel,channelId:s.channelId,conversationId:s.localConversationId,entity:s.localConversationId?this.store.suite.conversations[s.localConversationId]?.entity:null,proposalPending:!!s.proposal,updatedAt:s.updatedAt}));
   const allowed=new Set(sessions.map(s=>s.id));
-  return {enabled:this.state.enabled,busy:this.busy,lastError:a.admin?this.lastError:null,providers:a.admin?this.providerStatus:null,sessions,outbox:Object.values(this.state.outbox).filter(o=>a.admin||allowed.has(o.sessionId)).slice(-60).reverse().map(o=>({operationId:o.operationId,eventId:o.eventId,state:o.state,at:o.at,providerMessageId:o.providerMessageId||null})),errors:a.admin?[...Object.values(this.state.events).filter(e=>e.state==='error'),...Object.values(this.state.rejected)].map(e=>({eventId:e.eventId,error:e.error})).slice(-20):[]};
+  return {enabled:this.state.enabled,busy:!this.isIdle(),inFlight:this.inFlight.size+this.controlFlight.size,lastError:a.admin?this.lastError:null,providers:a.admin?this.providerStatus:null,sessions,outbox:Object.values(this.state.outbox).filter(o=>a.admin||allowed.has(o.sessionId)).slice(-60).reverse().map(o=>({operationId:o.operationId,eventId:o.eventId,state:o.state,at:o.at,providerMessageId:o.providerMessageId||null})),errors:a.admin?[...Object.values(this.state.events).filter(e=>e.state==='error'),...Object.values(this.state.rejected)].map(e=>({eventId:e.eventId,error:e.error})).slice(-20):[]};
  }
  async status(a){if(a.admin&&this.transport)try{this.providerStatus=await this.transport.status();}catch{this.providerStatus={ready:false,error:'Канал Адаптера недоступен'};}return this.snapshot(a);}
  ingest(input){
+  if(input.transportVersion==='v2'&&this.transport.verifyInbound)this.transport.verifyInbound(input);
   const event={};for(const key of ['eventId','messageId','channelId','conversationId','employeeId'])event[key]=text(input[key],key,160);
   if(['__proto__','constructor','prototype'].includes(event.eventId))fail('Некорректный ID события');
   if(input.transportVersion==='v2'){event.transportVersion='v2';event.bindingId=text(input.bindingId,'bindingId',160);if(event.conversationId!==event.bindingId)fail('Некорректная привязка события',403);}
@@ -41,8 +45,9 @@ class MessengerWorkflow{
  quarantine(input,error){const eventId=text(input.eventId,'eventId',160);return this.store.atomic(()=>{const key=digest([eventId,input.channelId,input.messageId]);this.state.rejected[key]={eventId,channelId:typeof input.channelId==='string'?input.channelId.slice(0,160):null,error:String(error.message).slice(0,300),at:stamp()};return {eventId};});}
  resetSession(e,c){
   const session=this.state.sessions[e.sessionId];session.proposal=null;
-  for(const old of Object.values(this.state.events))if(old.sessionId===e.sessionId&&old.sequence<e.sequence&&['received','analyzing'].includes(old.state))old.state='superseded';
+  for(const old of Object.values(this.state.events))if(old.sessionId===e.sessionId&&old.sequence<e.sequence&&['received','analyzing','case_analyzing'].includes(old.state))old.state='superseded';
   for(const o of Object.values(this.state.outbox))if(o.sessionId===e.sessionId&&o.state==='queued'&&this.state.events[o.eventId]?.sequence<e.sequence)o.state='cancelled';
+  if(c?.analysisStatus==='pending'&&c.engine==='adapter'){this.store.finishAnalysis(this.store.person(e.employeeId),c.id,c.analysisRequestId,null,Object.assign(Error('Пользователь прекратил ожидание'),{pending:true}));c=this.store.conversation(this.store.person(e.employeeId),c.id);}
   if(c?.analysisStatus==='waiting_adapter')this.store.abandonAnalysis(this.store.person(e.employeeId),c.id,{revision:c.revision});
  }
  prefix(e){return this.providerStatus?.providers?.find(p=>p.channelId===e.channelId)?.commandPrefix||'';}
@@ -70,7 +75,6 @@ class MessengerWorkflow{
   e=this.state.events[e.eventId];if(!e||!['received','analyzing','case_analyzing'].includes(e.state))return;
   const a=this.store.person(e.employeeId),s=this.state.sessions[e.sessionId];let c=s.localConversationId?this.store.conversation(a,s.localConversationId):null;
   if(e.state==='case_analyzing'){
-   await this.workroom.processPending();
    e=this.state.events[e.eventId];const job=this.store.suite.caseAdviceJobs[e.caseJobId];
    if(!job||['stale','error'].includes(job.status))return this.complete(e,'Общее сообщение сохранено; совет сейчас недоступен или контекст изменился.');
    if(job.status==='ready'){const view=this.workroom.snapshot(this.store.person(e.employeeId),job.caseId);return this.complete(e,'Общее обсуждение '+view.number+':\n'+require('./case-assistant.cjs').formatAdvice(job.result));}
@@ -81,8 +85,8 @@ class MessengerWorkflow{
    if(this.workroom){
     const visible=this.store.snapshot(a).cases.filter(x=>x.phase!=='draft');
     const find=number=>visible.filter(x=>x.number?.toLowerCase()===number.toLowerCase());
-    if(/^мои задачи$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+x.phase).join('\n'):'У вас нет доступных карточек.');}
-    const card=body.match(/^карточка\s+(MT-\d+)$/iu);
+    if(/^(?:мои задачи|мои обращения|что с моими задачами|что с моей задачей|статус моих задач)[?!.\s]*$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+x.phase).join('\n'):'У вас нет доступных карточек.');}
+    const card=body.match(/^(?:карточка|задача|статус(?: задачи)?|что с задачей)\s+(MT-\d+)[?!.\s]*$/iu);
     if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0],url=this.cardLinkFor?.(row.taskId,a.id);this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+row.phase+(url?'\n'+url:'\nСсылка на карточку сейчас недоступна.')+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
     if(/^\/(выход|exit)$/iu.test(body)){this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=null;});return this.complete(e,'Вы вышли из общего обсуждения.');}
     const discussion=body.match(/^обсудить\s+(MT-\d+)\s+([\s\S]+)$/iu);
@@ -99,7 +103,7 @@ class MessengerWorkflow{
    }
    if(/^\/(отмена|cancel)$/iu.test(body))return this.store.atomic(()=>{this.resetSession(e,c);if(!c?.entity)s.localConversationId=null;this.queue(e,c?.entity?'Карточка '+c.entity.number+' уже зарегистрирована. Её статус не изменён. Дальнейшие действия доступны в системе.':'Подготовка обращения отменена. Напишите новое сообщение, когда захотите вернуться.');e.state='completed';});
    if(/^\/(новое|new)$/iu.test(body))return this.store.atomic(()=>{this.resetSession(e,c);s.localConversationId=null;s.selectedCaseId=null;this.queue(e,'Расскажите своими словами, что произошло или что хотите улучшить. '+(this.prefix(e)?'Начинайте каждое сообщение с '+this.prefix(e)+'.':''));e.state='completed';});
-   if(!body||/^\/(start|help)$/iu.test(body))return this.complete(e,'Расскажите о проблеме или предложении. Я уточню детали и покажу карточку перед регистрацией. '+(this.prefix(e)?'Для этого разговора начинайте сообщения с '+this.prefix(e)+'.':''));
+   if(!body||/^\/(start|help)$/iu.test(body))return this.complete(e,'Я ИИ-помощник MODUS. Расскажите о проблеме или предложении. Я уточню детали и покажу карточку перед регистрацией. '+(this.prefix(e)?'Для этого разговора начинайте сообщения с '+this.prefix(e)+'.':''));
    if(s.proposal&&/^(да|ок|хорошо|согласен|подтверждаю)[.!\s]*$/iu.test(body))return this.complete(e,'Для направления именно этой карточки отправьте: '+this.command(e,'Подтверждаю '+s.proposal.code)+'. Либо напишите, что нужно исправить.');
    if(c&&['pending','waiting_adapter'].includes(c.analysisStatus))return;
    this.store.atomic(()=>{
@@ -117,8 +121,14 @@ class MessengerWorkflow{
   if(c.analysisRequestId!==e.analysisRequestId)return this.complete(e,'Разговор изменён в системе. Для продолжения напишите новое уточнение.');
   try{
    const result=await (collect?(this.analysis.recover?this.analysis.recover(c,context):this.analysis.collect(c,context)):this.analysis.analyze(c,context));
+   if(this.state.events[e.eventId]?.state!=='analyzing')return;
+   const freshStatus=await this.transport.status(),freshActor=this.store.person(e.employeeId);
+   if(freshActor.revision!==a.revision||freshActor.role!==a.role||!!freshActor.admin!==!!a.admin||!freshStatus.bindings?.some(b=>b.enabled&&b.channelId===e.channelId&&b.employeeId===e.employeeId&&b.conversationId===e.conversationId))throw Object.assign(Error('Права или привязка изменились во время разбора'),{status:403});
+   if(this.state.events[e.eventId]?.state!=='analyzing')return;
    this.store.atomic(()=>{const updated=this.store.finishAnalysis(a,c.id,e.analysisRequestId,result),s=this.state.sessions[e.sessionId];e=this.state.events[e.eventId];if(s.localConversationId!==updated.id){e.state='completed';return;}const r=updated.analysis;if(!updated.entity&&r.category&&r.department&&!r.missing?.length)this.offer(e,updated,r.reply||'Подготовил карточку.');else this.queue(e,(r.reply||r.missing?.map(x=>x.question).join('\n')||r.summary)+(this.prefix(e)?'\n\nОтветьте: '+this.prefix(e)+' ваш ответ':''));e.state='completed';e.error=null;});
   }catch(error){
+   if(this.state.events[e.eventId]?.state!=='analyzing')return;
+   if([401,403].includes(error.status)){this.store.atomic(()=>{const current=this.state.events[e.eventId];if(current){current.state='error';current.error='Права или привязка изменились во время разбора';}});return;}
    this.store.atomic(()=>{const latest=this.store.conversation(a,c.id);if(latest.analysisRequestId===e.analysisRequestId&&['pending','waiting_adapter'].includes(latest.analysisStatus))this.store.finishAnalysis(a,c.id,e.analysisRequestId,null,error);e=this.state.events[e.eventId];e.error=String(error.message).slice(0,300);if(error.pending){e.state='analyzing';}else{e.state='error';this.queue(e,'Сообщение сохранено, но сейчас не удалось получить ответ ИИ. Администратор видит ошибку. Повторить разбор: '+this.command(e,'/повторить'));}});
   }
  }
@@ -127,11 +137,13 @@ class MessengerWorkflow{
   for(const copy of Object.values(this.state.outbox)){
    if(!this.state.enabled||!this.transport)return;
    if(terminal.has(copy.state)||blockedEvents.has(copy.eventId))continue;
+   const thisEvent=this.state.events[copy.eventId];if(Object.values(this.state.outbox).some(o=>{const other=this.state.events[o.eventId];return other&&thisEvent&&other.sessionId===thisEvent.sessionId&&other.sequence<thisEvent.sequence&&!terminal.has(o.state);}))continue;
+   if(Object.values(this.state.progress).some(x=>x.eventId===copy.eventId&&['queued','sending'].includes(x.state)))continue;
    const operationId=copy.operationId;let receipt;
    try{
     if(copy.state==='queued'){
      const event=this.state.events[copy.eventId];this.store.person(event.employeeId);const status=await this.transport.status();if(event.transportVersion==='v2'&&status.v2Available===false)continue;if(!status.bindings?.some(b=>b.enabled&&b.channelId===event.channelId&&b.employeeId===event.employeeId&&b.conversationId===event.conversationId))throw Error('Привязка отключена');
-     const freshEvent=this.state.events[copy.eventId],fresh=this.state.outbox[operationId];if(!freshEvent||!fresh||fresh.state!=='queued')continue;const person=this.store.person(freshEvent.employeeId);const caseId=fresh.caseId||freshEvent.caseId||this.store.suite.caseAdviceJobs?.[freshEvent.caseJobId]?.caseId;if(caseId)this.store.get(caseId,person);
+     const freshEvent=this.state.events[copy.eventId],fresh=this.state.outbox[operationId];if(!this.state.enabled)return;if(!freshEvent||!fresh||fresh.state!=='queued')continue;const person=this.store.person(freshEvent.employeeId);const caseId=fresh.caseId||freshEvent.caseId||this.store.suite.caseAdviceJobs?.[freshEvent.caseJobId]?.caseId;if(caseId)this.store.get(caseId,person);
      this.store.atomic(()=>{this.state.outbox[operationId].state='sending';});
      receipt=await this.transport.reply({eventId:copy.eventId,operationId,text:copy.text});
     }else receipt=await this.transport.receipt({operationId});
@@ -151,12 +163,57 @@ class MessengerWorkflow{
     let event;try{event=this.ingest(input);}catch(error){this.lastError=String(error.message).slice(0,300);if([400,403,409].includes(error.status)){try{const rejected=input.transportVersion==='v2'&&this.transport.quarantine?this.transport.quarantine(input,error):this.quarantine(input,error);await this.transport.ack({eventId:rejected.eventId});}catch{}}continue;}
     try{if(event.ackEventId && input.transportVersion==='v2' && this.transport.quarantine)this.transport.quarantine(input,Error('Повтор ранее сохранённого сообщения'));await this.transport.ack({eventId:input.eventId});if(this.state.events[event.eventId])this.store.atomic(()=>{this.state.events[event.eventId].acked=true;});}catch(error){this.lastError=String(error.message).slice(0,300);}
    }
-   for(const event of Object.values(this.state.events))if(this.state.enabled&&['received','analyzing','case_analyzing'].includes(event.state)){
-    try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);this.store.atomic(()=>{const current=this.state.events[event.eventId];if([400,403,404,409].includes(e.status)){current.state='error';const c=current.localConversationId?this.store.conversation(this.store.person(current.employeeId),current.localConversationId):null;if(c?.analysisStatus==='waiting_adapter')this.store.abandonAnalysis(this.store.person(current.employeeId),c.id,{revision:c.revision});}current.error=this.lastError;});}
-    await this.flush();
+   for(const saved of Object.values(this.state.events))if(!saved.acked&&saved.state==='received'){
+    try{await this.transport.ack({eventId:saved.eventId});this.store.atomic(()=>{this.state.events[saved.eventId].acked=true;});}catch(error){this.lastError=String(error.message).slice(0,300);}
    }
-   await this.flush();
+   this.startProgress();
+   this.scheduleControls();
+   this.schedule();
+   this.startFlush();
   }catch(e){this.lastError=String(e.message).slice(0,300);}finally{this.busy=false;}
+ }
+ isIdle(){return !this.busy && !this.flushBusy && !this.progressBusy && this.inFlight.size===0 && this.controlFlight.size===0 && !Object.values(this.state.progress).some(x=>['queued','sending'].includes(x.state));}
+ startFlush(){if(this.flushBusy)return;this.flushBusy=true;void this.flush().catch(e=>{this.lastError=String(e.message).slice(0,300);}).finally(()=>{this.flushBusy=false;});}
+ startProgress(){
+  if(this.progressBusy||!this.state.enabled)return;
+  const cap=this.providerStatus?.v2Capabilities?.progressAck;
+  for(const e of Object.values(this.state.events)){
+   if(e.transportVersion!=='v2'||!e.acked||e.state!=='received'||Object.values(this.state.events).some(x=>x.sessionId===e.sessionId&&x.sequence<e.sequence&&['received','analyzing','case_analyzing'].includes(x.state))||Object.values(this.state.progress).some(x=>x.eventId===e.eventId)||Object.values(this.state.outbox).some(x=>x.eventId===e.eventId))continue;
+   const channel=this.providerStatus?.v2Channels?.find(c=>c.channelId===e.channelId);if(cap?.enabled!==true||cap.channels?.[e.channel]!==true||(channel&&channel.progressAck!==true)||typeof this.transport.progress!=='function')continue;
+   this.store.atomic(()=>{const operationId=randomUUID();this.state.progress[operationId]={operationId,eventId:e.eventId,state:'queued',at:stamp()};});
+  }
+  const operations=Object.values(this.state.progress).filter(x=>['queued','sending','accepted','unknown','sent','delivered'].includes(x.state));if(!operations.length)return;
+  this.progressBusy=true;void (async()=>{try{for(const op of operations){
+   if(!this.state.enabled)break;
+   try{
+    let receipt;
+    if(op.state==='queued'){
+     const status=await this.transport.status(),event=this.state.events[op.eventId],available=status.v2Capabilities?.progressAck;
+     if(!this.state.enabled||!event||event.state!=='received'||!event.acked||available?.enabled!==true||available.channels?.[event.channel]!==true||(status.v2Channels?.some(c=>c.channelId===event.channelId&&c.progressAck!==true))||Object.values(this.state.outbox).some(x=>x.eventId===op.eventId)){this.store.atomic(()=>{this.state.progress[op.operationId].state='cancelled';});continue;}
+     this.store.atomic(()=>{this.state.progress[op.operationId].state='sending';});receipt=await this.transport.progress({eventId:op.eventId,operationId:op.operationId});
+    }else receipt=await this.transport.progressReceipt({operationId:op.operationId});
+    if(receipt?.operationId!==op.operationId||receipt.eventId!==op.eventId||!['sending','sent','accepted','delivered','read','failed-before-send','unknown'].includes(receipt.state))throw Error('Квитанция не соответствует операции');
+    this.store.atomic(()=>{const current=this.state.progress[op.operationId],rank={sending:0,unknown:0,'failed-before-send':0,accepted:1,sent:2,delivered:3,read:4};if((rank[receipt.state]??0)>=(rank[current.state]??0)){current.state=receipt.state;current.providerMessageId=receipt.providerMessageId||current.providerMessageId||null;current.reason=receipt.reason||null;}current.checkedAt=stamp();});
+   }catch{this.store.atomic(()=>{const current=this.state.progress[op.operationId];if(current.state==='queued')current.state='cancelled';else if(current.state==='sending')current.state='unknown';});}
+  }}finally{this.progressBusy=false;}})();
+ }
+ scheduleControls(){
+  for(const event of Object.values(this.state.events)){
+   if(!event.acked||event.state!=='received'||this.controlFlight.has(event.eventId)||[...this.controlFlight.keys()].some(id=>this.state.events[id]?.sessionId===event.sessionId))continue;
+   const body=event.text.replace(/^\/modus(?:@\w+)?(?:\s+|$)/iu,'').trim();if(!/^\/(?:отмена|cancel|новое|new)$/iu.test(body))continue;
+   const job=(async()=>{try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);}})();this.controlFlight.set(event.eventId,job);void job.finally(()=>this.controlFlight.delete(event.eventId));
+  }
+ }
+ schedule(){
+  const events=Object.values(this.state.events).sort((a,b)=>a.sequence-b.sequence);
+  for(const event of events){
+   if(this.inFlight.size>=2)break;
+   if([...this.controlFlight.keys()].some(id=>this.state.events[id]?.sessionId===event.sessionId)||!event.acked || !['received','analyzing','case_analyzing'].includes(event.state)||this.inFlight.has(event.sessionId))continue;
+   if(events.some(x=>x.sessionId===event.sessionId&&x.sequence<event.sequence&&['received','analyzing','case_analyzing'].includes(x.state)))continue;
+   const job=(async()=>{try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);this.store.atomic(()=>{const current=this.state.events[event.eventId];if([400,403,404,409].includes(e.status))current.state='error';current.error=this.lastError;});}})();
+   this.inFlight.set(event.sessionId,job);
+   void job.finally(()=>{this.inFlight.delete(event.sessionId);});
+  }
  }
  start(){if(this.timer)return;this.timer=setInterval(()=>{void this.tick();},2500);this.timer.unref?.();}
  stop(){clearInterval(this.timer);this.timer=null;}

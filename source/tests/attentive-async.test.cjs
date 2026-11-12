@@ -1,0 +1,55 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const {SuiteStore}=require('../suite-store.cjs');
+const {MessengerWorkflow}=require('../messenger-workflow.cjs');
+const {busyReason}=require('../suite-control.cjs');
+test('synthetic slow session does not block ingress or another session; stop is busy',async()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-async-fixture-'))),events=[],acks=[];let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r);
+ const bindings=['a','b'].map((v,i)=>({channelId:v,conversationId:v,employeeId:i?'employee2':'employee',enabled:true}));
+ const transport={status:async()=>({bindings}),poll:async()=>({events:events.splice(0)}),ack:async({eventId})=>acks.push(eventId)};
+ const w=new MessengerWorkflow({store,analysis:{},transport});w.configure(store.person('admin'),{enabled:true});
+ w.process=async e=>{if(e.eventId==='a'){entered();await gate;}store.atomic(()=>{w.state.events[e.eventId].state='completed';});};
+ const ev=(id,employeeId)=>({eventId:id,messageId:id,channelId:id,conversationId:id,employeeId,channel:'telegram',text:'hello'});
+ events.push(ev('a','employee'));const first=w.tick();await started;await first;events.push(ev('b','employee2'));await w.tick();assert.deepEqual(acks,['a','b']);assert.equal(w.state.events.b.state,'completed');assert.equal(w.isIdle(),false);assert.ok(busyReason({store,messenger:w,workroom:{},delivery:{}}));release();await first;
+});
+
+
+test('synthetic owner progress uses scoped SDK and final uses legacy, unknown only reconciles',async()=>{
+ const {AdapterAuthority,CombinedMessengerTransport}=require('../adapter-authority.cjs'),{MessagingV2Client}=require('../vendor/adapter-platform/messaging-v2.cjs'),{payloadHash}=require('../vendor/adapter-platform/grant-hash.cjs');
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-progress-fixture-'))),authority=new AdapterAuthority({store,dir:store.dir}),binding={bindingId:'b',channelId:'owner-modus',employeeId:'employee',enabled:true,revision:1};let calls=[],first=true;const status={bindings:[binding],capabilities:{progressAck:{supported:true,enabled:true,channels:{whatsapp:true,telegram:false}}}};
+ const sdk=new MessagingV2Client({rpc:async(method,p)=>{calls.push(method);if(method.endsWith('_status'))return status;if(method.endsWith('_poll'))return {events:first?(first=false,[{eventId:'e',messageId:'m',bindingId:'b',conversationId:'b',channelId:'owner-modus',employeeId:'employee',channel:'whatsapp',text:'/help'}]):[]};const action=method.endsWith('_progress_receipt')?'progress_receipt':method.endsWith('_progress')?'progress':'ack';const payload=action==='progress_receipt'?{operationId:p.operationId}:action==='progress'?{eventId:p.eventId,operationId:p.operationId}:{eventId:p.eventId};authority.verify('Bearer '+authority.secret,{space:'modus-platform',grantId:p.grantId,action,payloadHash:payloadHash(payload)});if(action==='progress')throw Error('unknown');if(action==='progress_receipt')return {operationId:p.operationId,eventId:'e',state:'sent'};return {acked:true};}});
+ const legacy={status:async()=>({bindings:[],providers:[]}),reply:async p=>(calls.push('legacy-final'),{...p,state:'sent'}),receipt:async p=>({...p,state:'sent'})};const transport=new CombinedMessengerTransport({store,legacy,v2:sdk,authority}),w=new MessengerWorkflow({store,transport,analysis:{}});w.configure(store.person('admin'),{enabled:true});await w.tick();await Promise.all([...w.inFlight.values()]);await w.tick();await w.tick();assert.equal(calls.filter(x=>x==='adapter_messaging_v2_progress').length,1);assert.ok(calls.includes('adapter_messaging_v2_progress_receipt'));assert.ok(calls.includes('legacy-final'));assert.equal(Object.values(w.state.progress)[0].state,'sent');
+});
+
+test('synthetic cancel interrupts a live analysis and late result cannot revive or reply',async()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-cancel-fixture-'))),events=[],replies=[];let release,entered;const started=new Promise(r=>entered=r),gate=new Promise(r=>release=r);
+ const transport={status:async()=>({bindings:[{channelId:'c',conversationId:'c',employeeId:'employee',enabled:true}]}),poll:async()=>({events:events.splice(0)}),ack:async()=>({acked:true}),reply:async p=>(replies.push(p),{operationId:p.operationId,state:'sent'})};
+ const analysis={analyze:async()=>{entered();await gate;return {reply:'STALE'};}};const w=new MessengerWorkflow({store,transport,analysis});w.configure(store.person('admin'),{enabled:true});const e=(id,text)=>({eventId:id,messageId:id,channelId:'c',conversationId:'c',employeeId:'employee',channel:'telegram',text});
+ events.push(e('a','Проблема'));await w.tick();await started;events.push(e('cancel','/отмена'));await w.tick();await Promise.all([...w.controlFlight.values()]);assert.equal(w.state.events.a.state,'superseded');assert.equal(w.state.events.cancel.state,'completed');assert.equal(w.isIdle(),false);release();await Promise.all([...w.inFlight.values()]);await w.tick();while(w.flushBusy)await new Promise(r=>setImmediate(r));assert.equal(w.state.events.a.state,'superseded');assert.ok(replies.every(x=>!x.text.includes('STALE')));assert.equal(Object.values(w.state.sessions)[0].localConversationId,null);
+});
+
+test('synthetic scheduler limits model work to two and orders ordinary same-session events',async()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-limit-fixture-'))),events=[],bindings=['a','b','c'].map((x,i)=>({channelId:x,conversationId:x,employeeId:i===0?'employee':i===1?'employee2':'owner',enabled:true}));let release;const gate=new Promise(r=>release=r),started=[];
+ const transport={status:async()=>({bindings}),poll:async()=>({events:events.splice(0)}),ack:async()=>({acked:true})},w=new MessengerWorkflow({store,transport,analysis:{}});w.configure(store.person('admin'),{enabled:true});w.process=async e=>{started.push(e.eventId);await gate;store.atomic(()=>{w.state.events[e.eventId].state='completed';});};
+ for(const [id,ch,employeeId] of [['1','a','employee'],['2','a','employee'],['3','b','employee2'],['4','c','owner']])events.push({eventId:id,messageId:id,channelId:ch,conversationId:ch,employeeId,channel:'telegram',text:'x'});
+ await w.tick();assert.deepEqual(started,['1','3']);assert.equal(w.inFlight.size,2);release();await Promise.all([...w.inFlight.values()]);await w.tick();await Promise.all([...w.inFlight.values()]);assert.deepEqual(started,['1','3','2','4']);
+});
+
+test('synthetic late model result is discarded after employee is disabled',async()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-late-rights-fixture-'))),events=[];let release,entered;const gate=new Promise(r=>release=r),started=new Promise(r=>entered=r),binding={channelId:'c',conversationId:'c',employeeId:'employee',enabled:true};
+ const transport={status:async()=>({bindings:[binding]}),poll:async()=>({events:events.splice(0)}),ack:async()=>({acked:true}),reply:async()=>{throw Error('unexpected reply');}},analysis={analyze:async()=>{entered();await gate;return {reply:'should not appear'};}};
+ const w=new MessengerWorkflow({store,transport,analysis});w.configure(store.person('admin'),{enabled:true});events.push({eventId:'e',messageId:'m',channelId:'c',conversationId:'c',employeeId:'employee',channel:'telegram',text:'hello'});await w.tick();await started;const p=store.person('employee');store.updateStaff(store.person('admin'),{id:p.id,revision:p.revision,active:false});release();await Promise.all([...w.inFlight.values()]);assert.equal(w.state.events.e.state,'error');assert.equal(Object.keys(w.state.outbox).length,0);
+});
+
+test('synthetic restart reconciles unknown progress without resend and unsupported capability creates none',async()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'modus-restart-progress-')),store=new SuiteStore(dir);let sends=0,receipts=0;const cap={enabled:true,channels:{telegram:true,whatsapp:false}};
+ const transport={status:async()=>({v2Capabilities:{progressAck:cap},bindings:[]}),progress:async()=>{sends++;},progressReceipt:async p=>(receipts++,{...p,eventId:'old',state:'accepted'})};const w=new MessengerWorkflow({store,analysis:{},transport});w.configure(store.person('admin'),{enabled:true});store.atomic(()=>{w.state.events.old={eventId:'old',sessionId:'s',employeeId:'employee',channel:'telegram',channelId:'tg',transportVersion:'v2',acked:true,state:'completed',sequence:1};w.state.progress.op={operationId:'op',eventId:'old',state:'sending'};});
+ const reopened=new SuiteStore(dir),r=new MessengerWorkflow({store:reopened,analysis:{},transport});assert.equal(r.state.progress.op.state,'unknown');r.providerStatus=await transport.status();r.startProgress();while(r.progressBusy)await new Promise(done=>setImmediate(done));assert.equal(sends,0);assert.equal(receipts,1);assert.equal(r.state.progress.op.state,'accepted');
+ reopened.atomic(()=>{r.state.events.new={eventId:'new',sessionId:'s2',employeeId:'employee',channel:'whatsapp',channelId:'wa',transportVersion:'v2',acked:true,state:'received',sequence:2};});r.startProgress();while(r.progressBusy)await new Promise(done=>setImmediate(done));assert.equal(Object.keys(r.state.progress).length,1);assert.equal(sends,0);
+});
+
+test('synthetic progress receipt never downgrades delivery evidence and can advance to read',async()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'modus-monotonic-fixture-')));let state='sent',calls=0;
+ const transport={progressReceipt:async p=>(calls++,{...p,eventId:'e',state}),status:async()=>({})};const w=new MessengerWorkflow({store,analysis:{},transport});w.configure(store.person('admin'),{enabled:true});store.atomic(()=>{w.state.events.e={eventId:'e',state:'completed'};w.state.progress.op={operationId:'op',eventId:'e',state:'delivered',providerMessageId:'original'};});
+ w.startProgress();while(w.progressBusy)await new Promise(r=>setImmediate(r));assert.equal(w.state.progress.op.state,'delivered');state='read';w.startProgress();while(w.progressBusy)await new Promise(r=>setImmediate(r));assert.equal(w.state.progress.op.state,'read');w.startProgress();while(w.progressBusy)await new Promise(r=>setImmediate(r));assert.equal(calls,2);
+});

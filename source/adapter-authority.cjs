@@ -6,7 +6,7 @@ const {payloadHash} = require('./vendor/adapter-platform/grant-hash.cjs');
 const SPACE = 'modus-platform';
 const ADMIN_ACTIONS = new Set(['binding_prepare', 'binding_proof', 'binding_confirm', 'binding_revoke', 'mail_import']);
 const CASE_ACTIONS = new Set(['case_link', 'case_state', 'notify']);
-const INTAKE_ACTIONS = new Set(['ack','reply']);
+const INTAKE_ACTIONS = new Set(['ack','reply','progress','progress_receipt']);
 const reject = () => { throw Object.assign(new Error('Доступ к операции запрещён'), {status:403}); };
 class AdapterAuthority {
   constructor({store, dir, now = Date.now}) {
@@ -54,7 +54,7 @@ class AdapterAuthority {
     if (grant.targetId) {const target=this.store.person(grant.targetId);if(target.revision!==grant.targetRevision)reject();}
     if (grant.challengeId) {const challenge=this.store.suite.bindingChallenges?.[grant.challengeId];if(!challenge || challenge.actorId!==actor.id || challenge.employeeId!==grant.targetId || challenge.employeeRevision!==grant.targetRevision || challenge.expiresAt<=this.now() || (grant.proofId && challenge.proof?.proofId!==grant.proofId))reject();}
     if (grant.mailSelectionHash && payloadHash(this.store.suite.adapterMail?.selected || null)!==grant.mailSelectionHash) reject();
-    if(INTAKE_ACTIONS.has(grant.action)){const event=this.store.suite.messaging?.events?.[grant.eventId],binding=this.state.bindings[grant.bindingId];if(!event || event.transportVersion!=='v2' || event.employeeId!==actor.id || event.bindingId!==grant.bindingId || !binding?.enabled || binding.employeeId!==actor.id || binding.channelId!==event.channelId || event.conversationId!==event.bindingId || payloadHash(binding)!==grant.bindingHash)reject();if(event.caseId)this.store.get(event.caseId,actor);if(grant.action==='reply'){const out=this.store.suite.messaging?.outbox?.[grant.operationId];if(!out || out.eventId!==event.eventId || out.state!=='sending' || payloadHash({eventId:event.eventId,operationId:out.operationId,text:out.text})!==grant.payloadHash)reject();if(out.caseId)this.store.get(out.caseId,actor);}}
+    if(INTAKE_ACTIONS.has(grant.action)){const event=this.store.suite.messaging?.events?.[grant.eventId],binding=this.state.bindings[grant.bindingId];if(!event || event.transportVersion!=='v2' || event.employeeId!==actor.id || event.bindingId!==grant.bindingId || !binding?.enabled || binding.employeeId!==actor.id || binding.channelId!==event.channelId || event.conversationId!==event.bindingId || payloadHash(binding)!==grant.bindingHash || payloadHash({eventId:event.eventId,bindingId:event.bindingId,employeeId:event.employeeId,channelId:event.channelId,conversationId:event.conversationId})!==grant.eventHash)reject();if(event.caseId)this.store.get(event.caseId,actor);if(grant.action==='progress'||grant.action==='progress_receipt'){const op=this.store.suite.messaging?.progress?.[grant.operationId];if(!op||op.eventId!==event.eventId||!event.acked)reject();if(grant.action==='progress'&&(op.state!=='sending'||Object.values(this.store.suite.messaging.outbox||{}).some(o=>o.eventId===event.eventId&&o.state!=='cancelled')))reject();}if(grant.action==='reply'){const out=this.store.suite.messaging?.outbox?.[grant.operationId];if(!out || out.eventId!==event.eventId || out.state!=='sending' || payloadHash({eventId:event.eventId,operationId:out.operationId,text:out.text})!==grant.payloadHash)reject();if(out.caseId)this.store.get(out.caseId,actor);}}
     if (grant.adminBindingId && payloadHash(this.state.bindings[grant.adminBindingId] || null)!==grant.adminBindingHash) reject();
     if (CASE_ACTIONS.has(grant.action)) {
       const item = this.store.get(grant.caseId, actor);
@@ -78,7 +78,7 @@ class AdapterAuthority {
   issue(actor, {action,payload,caseId,bindingId,purpose,grantId,expiresAt} = {}) {
     if (!ADMIN_ACTIONS.has(action) && !CASE_ACTIONS.has(action) && !INTAKE_ACTIONS.has(action)) reject();
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) reject();
-    const keys={binding_prepare:['employeeId','channelId','operationId'],binding_proof:['challengeId'],binding_confirm:['challengeId','proofId'],binding_revoke:['bindingId','operationId','expectedRevision'],case_state:['caseId'],case_link:['caseId','bindingId','role','expectedRevision'],notify:['caseId','bindingId','operationId','kind','text'],mail_import:['snapshotId','revision','operationId'],ack:['eventId'],reply:['eventId','operationId','text']}[action];
+    const keys={binding_prepare:['employeeId','channelId','operationId'],binding_proof:['challengeId'],binding_confirm:['challengeId','proofId'],binding_revoke:['bindingId','operationId','expectedRevision'],case_state:['caseId'],case_link:['caseId','bindingId','role','expectedRevision'],notify:['caseId','bindingId','operationId','kind','text'],mail_import:['snapshotId','revision','operationId'],ack:['eventId'],reply:['eventId','operationId','text'],progress:['eventId','operationId'],progress_receipt:['operationId']}[action];
     if (Object.keys(payload).sort().join(',') !== [...keys].sort().join(',')) reject();
     const person = this.store.person(actor?.id);
     const id = grantId || randomUUID();
@@ -93,7 +93,7 @@ class AdapterAuthority {
       if (action === 'case_link' && ((payload.role === 'author' && binding.employeeId !== item.authorId) || (payload.role === 'executor' && binding.employeeId !== item.ownerId) || (payload.role === 'curator' && this.store.person(binding.employeeId).role !== 'manager'))) reject();
       Object.assign(row,{caseId,bindingId,bindingHash:binding?payloadHash(binding):null,caseRevision:task.revision,authorId:item.authorId,ownerId:item.ownerId,operationId:payload.operationId || null});
     }
-    if(INTAKE_ACTIONS.has(action)){const event=this.store.suite.messaging?.events?.[payload.eventId],binding=event&&this.state.bindings[event.bindingId];if(!event || event.employeeId!==person.id || event.transportVersion!=='v2' || !binding?.enabled || binding.employeeId!==person.id)reject();Object.assign(row,{eventId:event.eventId,bindingId:event.bindingId,bindingHash:payloadHash(binding),operationId:payload.operationId||null});}
+    if(INTAKE_ACTIONS.has(action)){const progress=action==='progress_receipt'&&this.store.suite.messaging?.progress?.[payload.operationId],event=this.store.suite.messaging?.events?.[action==='progress_receipt'?progress?.eventId:payload.eventId],binding=event&&this.state.bindings[event.bindingId];if(!event || event.employeeId!==person.id || event.transportVersion!=='v2' || !binding?.enabled || binding.employeeId!==person.id)reject();Object.assign(row,{eventId:event.eventId,bindingId:event.bindingId,bindingHash:payloadHash(binding),eventHash:payloadHash({eventId:event.eventId,bindingId:event.bindingId,employeeId:event.employeeId,channelId:event.channelId,conversationId:event.conversationId}),operationId:payload.operationId||null});}
     if(action==='binding_prepare'){const target=this.store.person(payload.employeeId);row.targetId=target.id;row.targetRevision=target.revision;}
     if(action==='binding_proof'||action==='binding_confirm'){const challenge=this.store.suite.bindingChallenges?.[payload.challengeId];if(!challenge)reject();const target=this.store.person(challenge.employeeId);if(target.revision!==challenge.employeeRevision)reject();row.targetId=target.id;row.targetRevision=target.revision;row.challengeId=payload.challengeId;row.proofId=payload.proofId||null;}
     if(action==='mail_import'){const selected=this.store.suite.adapterMail?.selected;if(!selected || selected.actorId!==person.id || selected.snapshotId!==payload.snapshotId || selected.revision!==payload.revision)reject();row.mailSelectionHash=payloadHash(selected);}
@@ -188,22 +188,23 @@ class CombinedMessengerTransport {
     const old=await this.legacy.status();
     try{
       const status=await this.v2.status();this.authority.updateBindings(status);this.v2Ready=true;
-      const corporate=status.bindings.filter(b=>b.channelId!=='owner-modus').map(b=>({...b,conversationId:b.bindingId}));
-      return {...old,bindings:[...(old.bindings||[]).filter(b=>b.channelId==='owner-modus'),...corporate],v2Capabilities:status.capabilities,v2Available:true};
+      const corporate=status.bindings.map(b=>({...b,conversationId:b.bindingId}));
+      return {...old,bindings:[...(old.bindings||[]).filter(b=>b.channelId==='owner-modus'),...corporate],v2Capabilities:status.capabilities,v2Channels:status.channels||[],v2Available:true};
     }catch{this.v2Ready=false;return {...old,bindings:(old.bindings||[]).filter(b=>b.channelId==='owner-modus'),v2Available:false};}
   }
   async poll(params){
     if(this.v2Ready){
-      try{const result=await this.v2.poll(params);this.polled.clear();return {events:(result.events||[]).map(e=>{if(e.channelId==='owner-modus')return Object.fromEntries(Object.entries(e).filter(([k])=>!['bindingId','untrusted'].includes(k)));const input={...e,transportVersion:'v2'};this.polled.set(e.eventId,payloadHash(input));return input;})};}catch{this.v2Ready=false;}
+      try{const result=await this.v2.poll(params);this.polled.clear();return {events:(result.events||[]).map(e=>{const input={...e,transportVersion:'v2'};this.polled.set(e.eventId,payloadHash(input));return input;})};}catch{this.v2Ready=false;}
     }
     const result=await this.legacy.poll(params);return {events:(result.events||[]).filter(e=>e.channelId==='owner-modus')};
   }
+  verifyInbound(input){if(input.transportVersion!=='v2'||this.polled.get(input.eventId)!==payloadHash(input))reject();}
   quarantine(input,error){
     if(input.transportVersion!=='v2' || this.polled.get(input.eventId)!==payloadHash(input))reject();
     const {eventId,bindingId,channelId,employeeId,conversationId,messageId,channel}=input;
     if(![eventId,bindingId,channelId,employeeId,conversationId,messageId,channel].every(v=>typeof v==='string'&&v.length>0&&v.length<=160)||!/^[A-Za-z0-9_-]{1,100}$/.test(eventId)||conversationId!==bindingId)reject();
     const binding=this.authority.state.bindings[bindingId];
-    if(!binding?.enabled || binding.channelId!==channelId || binding.employeeId!==employeeId || channelId==='owner-modus' || this.store.suite.messaging.events[eventId])reject();
+    if(!binding?.enabled || binding.channelId!==channelId || binding.employeeId!==employeeId || this.store.suite.messaging.events[eventId])reject();
     const trusted={eventId,bindingId,channelId,employeeId,conversationId,messageId,channel,transportVersion:'v2'};
     const key=payloadHash(trusted),signature=this.authority.rejectedSignature(trusted);
     this.store.atomic(()=>{const rows=this.store.suite.messaging.rejected;const old=rows[key];if(old && (old.signature!==signature||old.eventId!==eventId))reject();if(Object.values(rows).some(r=>r.eventId===eventId && r.signature && r.signature!==signature))reject();rows[key]||={eventId,bindingId,channelId,trusted,signature,error:String(error.message).slice(0,300),at:new Date().toISOString()};});
@@ -216,9 +217,21 @@ class CombinedMessengerTransport {
     const payload={eventId},actor=this.store.person(event.employeeId),grant=this.authority.issue(actor,{action:'ack',payload});
     return this.v2.ack({...payload,grantId:grant.grantId});
   }
+  async progress({eventId,operationId}){
+    const event=this.store.suite.messaging?.events?.[eventId];if(!event)throw Error('Событие не сохранено');
+    const payload={eventId,operationId},grant=this.authority.issue(this.store.person(event.employeeId),{action:'progress',payload});
+    const receipt=await this.v2.progress({...payload,grantId:grant.grantId});
+    if(receipt?.operationId!==operationId||receipt.eventId!==eventId)throw Error('Квитанция не соответствует событию');return receipt;
+  }
+  async progressReceipt({operationId}){
+    const op=this.store.suite.messaging?.progress?.[operationId],event=op&&this.store.suite.messaging.events[op.eventId];if(!event)throw Error('Операция не найдена');
+    const payload={operationId},grant=this.authority.issue(this.store.person(event.employeeId),{action:'progress_receipt',payload});
+    const receipt=await this.v2.progressReceipt({...payload,grantId:grant.grantId});
+    if(receipt?.operationId!==operationId||receipt.eventId!==event.eventId)throw Error('Квитанция не соответствует событию');return receipt;
+  }
   async reply({eventId,operationId,text}){
     const event=this.store.suite.messaging?.events?.[eventId];if(!event)throw Error('Событие не сохранено');
-    if(event.transportVersion!=='v2')return this.legacy.reply({eventId,operationId,text});
+    if(event.transportVersion!=='v2'||event.channelId==='owner-modus')return this.legacy.reply({eventId,operationId,text});
     const payload={eventId,operationId,text},actor=this.store.person(event.employeeId),grant=this.authority.issue(actor,{action:'reply',payload});
     const receipt=await this.v2.reply({...payload,grantId:grant.grantId});
     if(receipt?.operationId!==operationId || receipt.eventId!==eventId)throw Error('Квитанция не соответствует событию');
@@ -227,7 +240,7 @@ class CombinedMessengerTransport {
   async receipt({operationId}){
     const row=this.store.suite.messaging?.outbox?.[operationId],event=row&&this.store.suite.messaging?.events?.[row.eventId];
     if(!event)throw Error('Операция не найдена');
-    if(event.transportVersion!=='v2')return this.legacy.receipt({operationId});
+    if(event.transportVersion!=='v2'||event.channelId==='owner-modus')return this.legacy.receipt({operationId});
     const receipt=await this.v2.receipt({operationId});if(receipt.eventId!==event.eventId)throw Error('Квитанция не соответствует событию');return receipt;
   }
 }

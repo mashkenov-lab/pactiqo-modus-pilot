@@ -3,6 +3,8 @@ class MessagingV2Client{
  status(){return this.rpc('adapter_messaging_v2_status',{});}
  poll(p={}){return this.rpc('adapter_messaging_v2_poll',p);}
  ack(p){return this.rpc('adapter_messaging_v2_ack',p);}
+ progress(p){return this.rpc('adapter_messaging_v2_progress',p);}
+ progressReceipt(p){return this.rpc('adapter_messaging_v2_progress_receipt',p);}
  reply(p){return this.rpc('adapter_messaging_v2_reply',p);}
  receipt(p){return this.rpc('adapter_messaging_v2_receipt',p);}
  prepareBinding(p){return this.rpc('adapter_messaging_v2_binding_prepare',p);}
