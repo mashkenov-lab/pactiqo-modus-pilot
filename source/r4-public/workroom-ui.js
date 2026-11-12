@@ -23,6 +23,7 @@ async function openWorkroom(id) {
   const planForm=$('#room-plan');planForm.dataset.roomRevision=room.revision;planForm.dataset.caseRevision=room.caseRevision;
   let progressRevision=attention.progress[id]?.revision||0;
   const active = () => currentView(view) && openRoomId === id && $('#modal').open && !!$('#room-content');
+  function canEditPlan(currentCard){return currentCard.phase!=='accepted'&&(state.actor.id===currentCard.ownerId||state.actor.role==='manager'||state.actor.admin);}
   function paint(data, currentCard) {
     if (!active()) return;
     latest = data; latestCard = currentCard;
@@ -34,7 +35,7 @@ async function openWorkroom(id) {
       <p><strong>Состояние ИИ:</strong> ${esc(data.ai ? (adviceLabels[data.ai.status] || 'Состояние уточняется') : 'не запрошен')} ${esc(data.ai?.error || '')}</p>
       ${data.ai?.result ? `<details class="advice-detail" data-detail="advice-${esc(data.ai.requestId||'current')}"><summary>Предложение ИИ — раскрыть план (не утверждено)</summary><p class="body-text">${esc(data.ai.result.proposedPlan)}</p></details><p>${(data.ai.result.questions || []).map(esc).join('<br>')}</p>` : ''}`;
     $('#room-content').querySelectorAll('details[data-detail]').forEach(detail=>{if(expanded.has(detail.dataset.detail))detail.open=true;if(focusedDetail===detail.dataset.detail)detail.querySelector('summary').focus({preventScroll:true});});
-    const allowed = state.actor.id === currentCard.ownerId || state.actor.role === 'manager' || state.actor.admin;
+    const allowed = canEditPlan(currentCard);if(currentCard.phase==='accepted')$('#room-plan-status').textContent='Результат принят. План и срок доступны только для чтения.';
     $('#room-plan').querySelectorAll('textarea,input').forEach(element => { element.disabled = !allowed; });
     $('#room-plan button').disabled = !allowed || planBusy;
   }
@@ -69,9 +70,9 @@ async function openWorkroom(id) {
     catch(error) { if(active())toast(error.message); } finally { if(button.isConnected)button.disabled=false; }
   });
   $('#room-plan').addEventListener('submit', async e => {
-    e.preventDefault();const form=e.currentTarget,button=form.querySelector('button');planBusy=true;button.disabled=true;
+    e.preventDefault();if(!canEditPlan(latestCard))return;const form=e.currentTarget,button=form.querySelector('button');planBusy=true;button.disabled=true;
     try { await api('/cases/'+id+'/workroom/plan',{body:form.elements.body.value,dueAt:new Date(form.elements.dueAt.value).toISOString(),reason:form.elements.reason.value,expectedRevision:Number(form.dataset.roomRevision),expectedCaseRevision:Number(form.dataset.caseRevision)});if(!active())return;form.reset();await reload();if(active()){form.dataset.roomRevision=latest.revision;form.dataset.caseRevision=latest.caseRevision;toast('План сохранён');} }
-    catch(error) { if(active())$('#room-plan-status').textContent=error.message+(error.status===409?' Откройте обсуждение заново и проверьте изменения.':''); } finally { planBusy=false;if(button.isConnected&&active())button.disabled=!(state.actor.id===latestCard.ownerId||state.actor.role==='manager'||state.actor.admin); }
+    catch(error) { if(active())$('#room-plan-status').textContent=error.message+(error.status===409?' Откройте обсуждение заново и проверьте изменения.':''); } finally { planBusy=false;if(button.isConnected&&active())button.disabled=!canEditPlan(latestCard); }
   });
   $('#room-advice').addEventListener('click', async e => {
     const button=e.currentTarget; button.disabled=true;

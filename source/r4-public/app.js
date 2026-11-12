@@ -50,5 +50,25 @@ function navigation(actor,unread){
  return nav.filter(n=>core.includes(n[0])).map(button).join('')+button(['extensions','⊞','Возможности развития']);
 }
 function extensions(){return pageHead('Возможности развития','Основной процесс — обращение сотрудника, ответственный, решение и проверка автором.')+`<section class="panel"><h2>Основной процесс</h2><span class="badge">Локально проверяется на учебных данных</span><p>Работа с обращениями доступна в этом приложении. Это не подтверждает приёмку компании или доставку во внешние каналы.</p></section><section class="panel"><h2>Подготовленные дополнительные возможности</h2><p>Требуют подключения и отдельной проверки. Живая приёмка внешних сервисов этим экраном не подтверждена. Наличие настройки не означает работающий канал.</p><div class="extension-links">${nav.filter(n=>!['overview','queue','notifications','conversations','routing'].includes(n[0])).map(([id,icon,name])=>`<button data-page="${id}">${esc(name)}</button>`).join('')}</div><p>Адаптер и Desk: нужны доступный компонент и вход. CRM и межотдельные запросы: локальные процессы. Почта и Bitrix24: нужны права, портал и отдельное подтверждение внешнего результата.</p></section>`;}
-function nextCaseAction(c){return ({draft:'Автор проверяет и регистрирует обращение.',new:'Ответственный рассматривает обращение и начинает работу.',active:'Ответственный выполняет план и сообщает результат.',returned:'Ответственный учитывает замечания автора и дорабатывает результат.',question:'Автор отвечает на уточнение.',review:'Автор проверяет результат: принимает или возвращает с замечанием.',accepted:'Результат принят автором. Обращение закрыто.'})[c.phase]||'Проверьте доступные действия в карточке.';}
-function currentCaseSummary(c){return `<section class="notice current-case" aria-label="Текущее состояние обращения"><h3>Сейчас</h3><p><strong>Статус:</strong> ${esc(c.status||state.statuses[c.phase]||'Уточняется')}</p><p><strong>Ответственный:</strong> ${esc(c.owner||'Не назначен')} · <strong>Срок:</strong> ${dt(c.dueAt)}</p><p><strong>Ждём:</strong> ${esc(c.phase==='accepted'?'никого — результат принят':!c.owner&&c.phase!=='draft'?'назначения руководителем':['draft','question','review'].includes(c.phase)?'автора':'ответственного')}</p><p><strong>Следующее действие:</strong> ${esc(nextCaseAction(c))}</p></section>`;}
+function currentWorkflow(c){
+ const type=['lead','transfer'].includes(c.type)?c.type:'case',phase=c.phase,assigned=!!c.ownerId;
+ if(type==='lead'){
+  const status=state.communications.stages[phase]||'Состояние уточняется';
+  if(['won','lost'].includes(phase))return {status,waiting:'никого — клиентский запрос завершён',next:'Клиентский запрос завершён.'};
+  if(!assigned)return {status,waiting:'назначения руководителем',next:'Руководитель назначает ответственного.'};
+  return {status,waiting:'ответственного',next:c.nextStep||'Ответственный уточняет следующий шаг по клиентскому запросу.'};
+ }
+ if(type==='transfer'){
+  if(phase==='accepted')return {status:'Запрос принят',waiting:'никого — результат принят',next:'Запрос принят инициатором. Работа завершена.'};
+  if(phase==='review')return {status:state.statuses[phase]||'Проверка результата',waiting:'инициатора запроса',next:'Инициатор проверяет результат: принимает или возвращает с замечанием.'};
+  if(!assigned)return {status:state.statuses[phase]||'Состояние уточняется',waiting:'назначения руководителем',next:'Руководитель назначает ответственного.'};
+  return {status:state.statuses[phase]||'Состояние уточняется',waiting:'ответственного',next:phase==='returned'?'Ответственный дорабатывает результат по замечаниям инициатора.':'Ответственный выполняет запрос и передаёт результат инициатору.'};
+ }
+ const status=c.status||state.statuses[phase]||'Состояние уточняется';
+ if(phase==='accepted')return {status,waiting:'никого — результат принят',next:'Результат принят автором. Обращение закрыто.'};
+ const authorSteps={draft:'Автор проверяет и регистрирует обращение.',question:'Автор отвечает на уточнение.',review:'Автор проверяет результат: принимает или возвращает с замечанием.'};
+ if(authorSteps[phase])return {status,waiting:'автора',next:authorSteps[phase]};
+ if(!assigned)return {status,waiting:'назначения руководителем',next:'Руководитель назначает ответственного.'};
+ return {status,waiting:'ответственного',next:({new:'Ответственный рассматривает обращение и начинает работу.',active:'Ответственный выполняет план и сообщает результат.',returned:'Ответственный учитывает замечания автора и дорабатывает результат.'})[phase]||'Проверьте доступные действия в карточке.'};
+}
+function currentCaseSummary(c){const view=currentWorkflow(c);return `<section class="notice current-case" aria-label="Текущее состояние обращения"><h3>Сейчас</h3><p><strong>Статус:</strong> ${esc(view.status)}</p><p><strong>Ответственный:</strong> ${esc(c.owner||'Не назначен')} · <strong>Срок:</strong> ${dt(c.dueAt)}</p><p><strong>Ждём:</strong> ${esc(view.waiting)}</p><p><strong>Следующее действие:</strong> ${esc(view.next)}</p></section>`;}
