@@ -29,7 +29,7 @@ class MessengerWorkflow{
   const event={};for(const key of ['eventId','messageId','channelId','conversationId','employeeId'])event[key]=text(input[key],key,160);
   if(['__proto__','constructor','prototype'].includes(event.eventId))fail('Некорректный ID события');
   if(input.transportVersion==='v2'){event.transportVersion='v2';event.bindingId=text(input.bindingId,'bindingId',160);if(event.conversationId!==event.bindingId)fail('Некорректная привязка события',403);}
-  if(!['telegram','whatsapp'].includes(input.channel))fail('Неизвестный канал');event.channel=input.channel;event.text=text(input.text,'text',24000);
+  if(!['telegram','whatsapp','max'].includes(input.channel))fail('Неизвестный канал');event.channel=input.channel;event.text=text(input.text,'text',24000);
   const hash=digest(event),old=this.state.events[event.eventId];if(old){if(old.hash!==hash)fail('Повтор события изменён: конфликт идентичности или текста',409);return {...old,duplicate:true};}
   try{this.store.person(event.employeeId);}catch{fail('Отправитель не найден среди сотрудников',403);}
   if(this.providerStatus && !this.providerStatus.bindings?.some(b=>b.enabled&&b.channelId===event.channelId&&b.employeeId===event.employeeId&&b.conversationId===event.conversationId))fail('Привязка сотрудника отключена или изменена',403);
@@ -148,8 +148,8 @@ class MessengerWorkflow{
    this.providerStatus=await this.transport.status();
    const polled=await this.transport.poll({limit:20});
    for(const input of (Array.isArray(polled)?polled:polled.events||[])){
-    let event;try{event=this.ingest(input);}catch(error){this.lastError=String(error.message).slice(0,300);if([400,403,409].includes(error.status)){try{const rejected=this.quarantine(input,error);await this.transport.ack({eventId:rejected.eventId});}catch{}}continue;}
-    try{await this.transport.ack({eventId:input.eventId});if(this.state.events[event.eventId])this.store.atomic(()=>{this.state.events[event.eventId].acked=true;});}catch(error){this.lastError=String(error.message).slice(0,300);}
+    let event;try{event=this.ingest(input);}catch(error){this.lastError=String(error.message).slice(0,300);if([400,403,409].includes(error.status)){try{const rejected=input.transportVersion==='v2'&&this.transport.quarantine?this.transport.quarantine(input,error):this.quarantine(input,error);await this.transport.ack({eventId:rejected.eventId});}catch{}}continue;}
+    try{if(event.ackEventId && input.transportVersion==='v2' && this.transport.quarantine)this.transport.quarantine(input,Error('Повтор ранее сохранённого сообщения'));await this.transport.ack({eventId:input.eventId});if(this.state.events[event.eventId])this.store.atomic(()=>{this.state.events[event.eventId].acked=true;});}catch(error){this.lastError=String(error.message).slice(0,300);}
    }
    for(const event of Object.values(this.state.events))if(this.state.enabled&&['received','analyzing','case_analyzing'].includes(event.state)){
     try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);this.store.atomic(()=>{const current=this.state.events[event.eventId];if([400,403,404,409].includes(e.status)){current.state='error';const c=current.localConversationId?this.store.conversation(this.store.person(current.employeeId),current.localConversationId):null;if(c?.analysisStatus==='waiting_adapter')this.store.abandonAnalysis(this.store.person(current.employeeId),c.id,{revision:c.revision});}current.error=this.lastError;});}

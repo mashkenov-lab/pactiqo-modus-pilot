@@ -1,7 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
-const {randomBytes, randomUUID, timingSafeEqual} = require('node:crypto');
+const {randomBytes, randomUUID, timingSafeEqual, createHmac} = require('node:crypto');
 const {payloadHash} = require('./vendor/adapter-platform/grant-hash.cjs');
 const SPACE = 'modus-platform';
 const ADMIN_ACTIONS = new Set(['binding_prepare', 'binding_proof', 'binding_confirm', 'binding_revoke', 'mail_import']);
@@ -40,7 +40,14 @@ class AdapterAuthority {
     this.store.atomic(() => { this.state.bindings = bindings; });
     return structuredClone(bindings);
   }
+  rejectedSignature(record){return createHmac('sha256',this.secret).update(JSON.stringify(record)).digest('hex');}
   current(grant) {
+    if(grant.rejectedKey){
+      if(grant.action!=='ack')reject();
+      const stored=this.store.suite.messaging?.rejected?.[grant.rejectedKey],binding=stored&&this.state.bindings[stored.bindingId];
+      if(!stored || !stored.trusted || stored.eventId!==grant.eventId || stored.trusted.eventId!==stored.eventId || stored.bindingId!==stored.trusted.bindingId || stored.channelId!==stored.trusted.channelId || stored.signature!==this.rejectedSignature(stored.trusted) || payloadHash(stored.trusted)!==grant.rejectedHash || !binding?.enabled || binding.bindingId!==stored.trusted.bindingId || binding.employeeId!==stored.trusted.employeeId || binding.channelId!==stored.trusted.channelId || payloadHash(binding)!==grant.bindingHash)reject();
+      return null;
+    }
     const actor = this.store.person(grant.actorId);
     if (actor.revision !== grant.actorRevision || actor.role !== grant.actorRole || !!actor.admin !== grant.actorAdmin) reject();
     if (ADMIN_ACTIONS.has(grant.action)) { if (!actor.admin) reject(); }
@@ -94,6 +101,12 @@ class AdapterAuthority {
     this.current(row);
     this.store.atomic(() => { this.state.grants[id] = row; });
     return {grantId:id,expiresAt:limit};
+  }
+  issueRejectedAck(key){
+    const stored=this.store.suite.messaging?.rejected?.[key],binding=stored&&this.state.bindings[stored.bindingId];
+    if(!stored?.trusted || !binding || this.store.suite.messaging?.events?.[stored.eventId])reject();
+    const row={space:SPACE,grantId:randomUUID(),action:'ack',payloadHash:payloadHash({eventId:stored.eventId}),expiresAt:this.now()+240000,instanceId:this.instanceId,rejectedKey:key,eventId:stored.eventId,rejectedHash:payloadHash(stored.trusted),bindingHash:payloadHash(binding)};
+    this.current(row);this.store.atomic(()=>{this.state.grants[row.grantId]=row;});return {grantId:row.grantId,expiresAt:row.expiresAt};
   }
   verify(bearer, query) {
     const token = typeof bearer === 'string' && bearer.startsWith('Bearer ') ? bearer.slice(7) : '';
@@ -170,7 +183,7 @@ class CaseLinks {
   }
 }
 class CombinedMessengerTransport {
-  constructor({store,legacy,v2,authority}){Object.assign(this,{store,legacy,v2,authority});this.v2Ready=false;}
+  constructor({store,legacy,v2,authority}){Object.assign(this,{store,legacy,v2,authority});this.v2Ready=false;this.polled=new Map();}
   async status(){
     const old=await this.legacy.status();
     try{
@@ -181,12 +194,24 @@ class CombinedMessengerTransport {
   }
   async poll(params){
     if(this.v2Ready){
-      try{const result=await this.v2.poll(params);return {events:(result.events||[]).map(e=>e.channelId==='owner-modus'?Object.fromEntries(Object.entries(e).filter(([k])=>!['bindingId','untrusted'].includes(k))):{...e,transportVersion:'v2'})};}catch{this.v2Ready=false;}
+      try{const result=await this.v2.poll(params);this.polled.clear();return {events:(result.events||[]).map(e=>{if(e.channelId==='owner-modus')return Object.fromEntries(Object.entries(e).filter(([k])=>!['bindingId','untrusted'].includes(k)));const input={...e,transportVersion:'v2'};this.polled.set(e.eventId,payloadHash(input));return input;})};}catch{this.v2Ready=false;}
     }
     const result=await this.legacy.poll(params);return {events:(result.events||[]).filter(e=>e.channelId==='owner-modus')};
   }
+  quarantine(input,error){
+    if(input.transportVersion!=='v2' || this.polled.get(input.eventId)!==payloadHash(input))reject();
+    const {eventId,bindingId,channelId,employeeId,conversationId,messageId,channel}=input;
+    if(![eventId,bindingId,channelId,employeeId,conversationId,messageId,channel].every(v=>typeof v==='string'&&v.length>0&&v.length<=160)||!/^[A-Za-z0-9_-]{1,100}$/.test(eventId)||conversationId!==bindingId)reject();
+    const binding=this.authority.state.bindings[bindingId];
+    if(!binding?.enabled || binding.channelId!==channelId || binding.employeeId!==employeeId || channelId==='owner-modus' || this.store.suite.messaging.events[eventId])reject();
+    const trusted={eventId,bindingId,channelId,employeeId,conversationId,messageId,channel,transportVersion:'v2'};
+    const key=payloadHash(trusted),signature=this.authority.rejectedSignature(trusted);
+    this.store.atomic(()=>{const rows=this.store.suite.messaging.rejected;const old=rows[key];if(old && (old.signature!==signature||old.eventId!==eventId))reject();if(Object.values(rows).some(r=>r.eventId===eventId && r.signature && r.signature!==signature))reject();rows[key]||={eventId,bindingId,channelId,trusted,signature,error:String(error.message).slice(0,300),at:new Date().toISOString()};});
+    this.polled.delete(eventId);return {eventId};
+  }
   async ack({eventId}){
-    const event=this.store.suite.messaging?.events?.[eventId];if(!event)throw Error('Событие не сохранено');
+    const event=this.store.suite.messaging?.events?.[eventId];
+    if(!event){const entries=Object.entries(this.store.suite.messaging?.rejected||{}).filter(([,r])=>r.eventId===eventId&&r.trusted);if(entries.length!==1)throw Error('Событие не сохранено');const grant=this.authority.issueRejectedAck(entries[0][0]);return this.v2.ack({eventId,grantId:grant.grantId});}
     if(event.transportVersion!=='v2')return this.legacy.ack({eventId});
     const payload={eventId},actor=this.store.person(event.employeeId),grant=this.authority.issue(actor,{action:'ack',payload});
     return this.v2.ack({...payload,grantId:grant.grantId});
@@ -195,7 +220,9 @@ class CombinedMessengerTransport {
     const event=this.store.suite.messaging?.events?.[eventId];if(!event)throw Error('Событие не сохранено');
     if(event.transportVersion!=='v2')return this.legacy.reply({eventId,operationId,text});
     const payload={eventId,operationId,text},actor=this.store.person(event.employeeId),grant=this.authority.issue(actor,{action:'reply',payload});
-    return this.v2.reply({...payload,grantId:grant.grantId});
+    const receipt=await this.v2.reply({...payload,grantId:grant.grantId});
+    if(receipt?.operationId!==operationId || receipt.eventId!==eventId)throw Error('Квитанция не соответствует событию');
+    return receipt;
   }
   async receipt({operationId}){
     const row=this.store.suite.messaging?.outbox?.[operationId],event=row&&this.store.suite.messaging?.events?.[row.eventId];
