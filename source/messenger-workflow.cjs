@@ -9,8 +9,8 @@ const text=(v,label,max)=>{if(typeof v!=='string'||!v.trim()||Array.from(v).leng
 // Only an authenticated Adapter messaging transport may supply events here.
 // There is intentionally no public/browser endpoint for injecting an inbound event.
 class MessengerWorkflow{
- constructor({store,analysis,transport,workroom,now=()=>Date.now()}){
-  Object.assign(this,{store,analysis,transport,workroom,now,busy:false,timer:null,lastError:null,providerStatus:null});
+ constructor({store,analysis,transport,workroom,cardLinkFor,now=()=>Date.now()}){
+  Object.assign(this,{store,analysis,transport,workroom,cardLinkFor,now,busy:false,timer:null,lastError:null,providerStatus:null});
   if(!store.suite.messaging)store.atomic(()=>{store.suite.messaging={schema:1,enabled:false,events:{},sessions:{},outbox:{}};});
   if(!this.state.rejected)store.atomic(()=>{this.state.rejected={};});
   // Migration only touches the local pilot ledger; provider events keep their IDs.
@@ -83,7 +83,7 @@ class MessengerWorkflow{
     const find=number=>visible.filter(x=>x.number?.toLowerCase()===number.toLowerCase());
     if(/^мои задачи$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+x.phase).join('\n'):'У вас нет доступных карточек.');}
     const card=body.match(/^карточка\s+(MT-\d+)$/iu);
-    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0];this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+row.phase+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
+    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0],url=this.cardLinkFor?.(row.taskId,a.id);this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+row.phase+(url?'\n'+url:'\nСсылка на карточку сейчас недоступна.')+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
     if(/^\/(выход|exit)$/iu.test(body)){this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=null;});return this.complete(e,'Вы вышли из общего обсуждения.');}
     const discussion=body.match(/^обсудить\s+(MT-\d+)\s+([\s\S]+)$/iu);
     const selected=s.selectedCaseId && !discussion && !body.startsWith('/') && !confirmation ? visible.find(x=>x.taskId===s.selectedCaseId) : null;

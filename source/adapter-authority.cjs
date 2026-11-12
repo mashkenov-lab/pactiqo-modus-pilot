@@ -68,8 +68,8 @@ class AdapterAuthority {
       if (grant.action === 'notify') {
         const row = this.store.suite.caseDelivery?.outbox?.[grant.operationId];
         if (!row || !['queued','sending'].includes(row.state) || row.payloadHash !== grant.payloadHash) reject();
-        const event = row.eventSource==='assignment' ? this.store.platform.notifications.find(n=>n.id===row.eventId && ['created','assign'].includes(n.action) && n.recipient===binding.employeeId) : this.store.suite.caseWorkspaces?.[grant.caseId]?.events?.find(e => e.id === row.eventId);
-        if (!event || (row.eventSource==='assignment'?event.title:event.body) !== row.eventBody || (row.eventSource==='assignment' && item.ownerId!==binding.employeeId)) reject();
+        if(row.caseId!==grant.caseId||row.recipientId!==binding.employeeId)reject();
+        try{require('./case-delivery.cjs').currentDeliveryEvent(this.store,row,item);}catch{reject();}
         if (row.creatorId) this.store.get(grant.caseId,this.store.person(row.creatorId));
       }
     }

@@ -2,6 +2,20 @@
 const {createHash,randomUUID} = require('node:crypto');
 const {payloadHash} = require('./vendor/adapter-platform/grant-hash.cjs');
 const terminal = new Set(['sent','delivered','read','failed','failed-before-send','cancelled','unsupported']);
+const humanActions=new Set(['created','assign','publish','start','resolve','decline','question','reply','return','accept','comment','attachment']);
+const notificationStamp=n=>payloadHash({id:n.id,caseId:n.caseId,recipient:n.recipient,number:n.number,action:n.action,title:n.title,creatorId:n.creatorId,participants:n.participants,humanEvent:n.humanEvent,resolution:n.resolution});
+// Shared with grant issuance/callback verification: a mutable current case must
+// never replace the exact human event approved for this durable delivery.
+function currentDeliveryEvent(store,row,item){
+  const notification=['assignment','notification'].includes(row.eventSource);
+  const event=notification?store.platform.notifications.find(n=>n.id===row.eventId&&n.caseId===row.caseId&&n.recipient===row.recipientId):store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
+  if(!event)throw Error('Событие недоступно');
+  if(row.eventSource==='notification'){
+    if(notificationStamp(event)!==row.eventStamp||item.authorId!==event.participants?.authorId||item.ownerId!==event.participants?.ownerId)throw Error('Событие или участники изменены');
+  }else if((notification?event.title:event.body)!==row.eventBody||(notification&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
+  if(row.payloadHash!==payloadHash(row.payload))throw Error('Содержимое доставки изменено');
+  return event;
+}
 class CaseDelivery {
   constructor({store,workroom,transport,authority,links,cardLinkFor,now=Date.now}){
     Object.assign(this,{store,workroom,transport,authority,links,cardLinkFor,now});this.busy=false;this.timer=null;
@@ -15,8 +29,7 @@ class CaseDelivery {
     const person=this.store.person(row.recipientId),item=this.store.get(row.caseId,person);
     if(![item.authorId,item.ownerId].includes(person.id))throw Error('Получатель больше не участник');
     if(row.creatorId)this.store.get(row.caseId,this.store.person(row.creatorId));
-    const event=row.eventSource==='assignment'?this.store.platform.notifications.find(n=>n.id===row.eventId&&['created','assign'].includes(n.action)&&n.recipient===row.recipientId):this.store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
-    if(!event || (row.eventSource==='assignment'?event.title:event.body)!==row.eventBody || (row.eventSource==='assignment'&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
+    const event=currentDeliveryEvent(this.store,row,item);
     return {person,item,event};
   }
   channel(status, binding) {
@@ -56,19 +69,25 @@ class CaseDelivery {
   collectAssignments(status){
     const all=this.store.platform.notifications;
     for(const note of all.filter(n=>!this.state.notificationSeen[n.id])){
-      if(!['created','assign'].includes(note.action))continue;
+      if(!humanActions.has(note.action))continue;
       let person,item;try{person=this.store.person(note.recipient);item=this.store.get(note.caseId,person);}catch{continue;}
-      if(item.ownerId!==person.id)continue;
+      if(![item.authorId,item.ownerId].includes(person.id))continue;
+      // Older notifications have no immutable human-event payload. Keep the
+      // original assignment path; never reconstruct a result from current state.
+      const pinned=!!note.humanEvent&&!!note.participants;
+      if(!pinned&&(!['created','assign'].includes(note.action)||item.ownerId!==person.id))continue;
       const choices=(status.bindings||[]).filter(b=>b.enabled&&b.employeeId===person.id);
       const binding=this.choose(status,person,choices);if(!binding)continue;
       const operationId=this.id(note.id,person.id,binding.bindingId);
       if(this.state.outbox[operationId])continue;
       const url=this.cardLinkFor?.(note.caseId,person.id);
-      const text=('Вам назначено обращение '+item.number+' · '+note.title+(url?'\n'+url:'')).slice(0,4000);
-      const payload={caseId:note.caseId,bindingId:binding.bindingId,operationId,kind:'assignment',text};
-      this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:'assignment',eventBody:note.title,creatorId:null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:this.channel(status,binding).channel!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+      const labels={created:'Вам назначено обращение',assign:'Изменён ответственный',publish:'Опубликовано обращение',start:'Принято в работу',resolve:'Результат на проверку автору',decline:'Мотивированный отказ на проверку автору',question:'Уточнение от исполнителя',reply:'Ответ автора',return:'Автор вернул на доработку',accept:'Автор принял результат',comment:'Комментарий',attachment:'Добавлено вложение'};
+      const suffix=url?'\n'+url:'';
+      const body=pinned?'\n'+note.humanEvent.body+(note.resolution?.url?'\n'+note.resolution.url:''):'';
+      const text=(labels[note.action]+' '+note.number+' · '+note.title+body).slice(0,4000-suffix.length)+suffix;
+      const payload={caseId:note.caseId,bindingId:binding.bindingId,operationId,kind:['created','assign','publish'].includes(note.action)?'assignment':'result',text};
+      this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:pinned?'notification':'assignment',eventAction:note.action,eventStamp:pinned?notificationStamp(note):null,eventBody:note.title,creatorId:note.creatorId||null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:this.channel(status,binding).channel!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};this.state.notificationSeen[note.id]=true;});
     }
-    this.store.atomic(()=>{this.state.notificationSeen=Object.fromEntries(this.store.platform.notifications.map(n=>[n.id,true]));});
   }
   async tick(){
     if(this.busy)return;this.busy=true;
@@ -101,4 +120,4 @@ class CaseDelivery {
   start(){if(!this.timer){this.timer=setInterval(()=>this.tick().catch(()=>{}),2500);this.timer.unref?.();}}
   stop(){clearInterval(this.timer);this.timer=null;}
 }
-module.exports={CaseDelivery};
+module.exports={CaseDelivery,currentDeliveryEvent};
