@@ -28,9 +28,10 @@ class AdapterMail {
     return this.store.atomic(()=>{this.state.selected={...result,actorId:p.id};return structuredClone(this.state.selected);});
   }
   snapshot(actor){this.admin(actor);return structuredClone(this.state);}
-  async importSelected(actor){
+  async importSelected(actor,expected){
     const p=this.admin(actor),selected=structuredClone(this.state.selected);
     if(!selected || selected.actorId!==p.id)throw Error('Сначала выберите письмо');
+    if(!expected || typeof expected!=='object' || expected.snapshotId!==selected.snapshotId || expected.hash!==selected.hash || expected.revision!==selected.revision)throw Object.assign(Error('Выбранное письмо изменилось; проверьте выбор заново'),{status:409});
     const existing=Object.values(this.state.imports).find(x=>x.snapshotId===selected.snapshotId&&x.snapshotRevision===selected.revision);
     if(existing)return structuredClone(existing);
     let operation=Object.values(this.state.operations).find(x=>x.snapshotId===selected.snapshotId&&x.revision===selected.revision);

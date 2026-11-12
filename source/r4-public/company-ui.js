@@ -1,6 +1,10 @@
 'use strict';
+async function companyRequest(view,path,body){const result=await api(path,body);if(!currentView(view)||!state.actor.admin)throw Error('Экран уже закрыт');return result;}
 async function openCompany() {
+  const opening = newView();
+  if (!opening.actorId || !state.actor.admin) return;
   const company = await api('/company');
+  if (!currentView(opening) || !state.actor.admin) return;
   const people = Object.values(company.people);
   modal(modalHead('Компания и ответственность') + `
     <p>Контакты в справочнике не подтверждают привязку к провайдеру.</p><button type="button" id="company-channels">Каналы и почта</button>
@@ -16,22 +20,27 @@ async function openCompany() {
     <label>Подразделение<select name="department">${options(company.departments)}</select></label><label>Ответственный<select name="ownerId">${options(people.filter(p=>p.active&&['owner','manager'].includes(p.role)))}</select></label>
     <label>Вид<select name="kind"><option value="process">Процесс</option><option value="job-description">Должностная инструкция</option></select></label><label><input type="checkbox" name="approved"> Утверждён администратором</label><button>Сохранить документ</button></form>
     <div>${company.responsibilities.map(d=>`<p><strong>${esc(d.title)}</strong> · ${esc(d.sourceName)} · ${esc(company.people[d.ownerId]?.name||d.ownerId)} · ${d.approved?'утверждён':'черновик'}</p>`).join('')}</div>`);
+  const view={epoch:uiEpoch,actorId:opening.actorId};
+  const call=(path,body)=>companyRequest(view,path,body);
   $('#company-channels').onclick=()=>openCompanyChannels(company).catch(err=>toast(err.message));
   let preview=null, original=null;
-  $('#company-file').onchange=async e=>{const file=e.target.files[0];if(file){$('#company-text').value=await file.text();$('#company-format').value=file.name.toLowerCase().endsWith('.json')?'json':'csv';preview=null;$('#company-apply').disabled=true;}};
+  $('#company-file').onchange=async e=>{const file=e.target.files[0];if(file){const text=await file.text();if(!currentView(view))return;$('#company-text').value=text;$('#company-format').value=file.name.toLowerCase().endsWith('.json')?'json':'csv';preview=null;$('#company-apply').disabled=true;}};
   $('#company-text').oninput=()=>{preview=null;$('#company-apply').disabled=true;};
   $('#company-format').onchange=()=>{preview=null;$('#company-apply').disabled=true;};
-  $('#company-preview').onclick=async()=>{try{original={format:$('#company-format').value,text:$('#company-text').value};preview=await api('/company/import/preview',original);$('#company-preview-result').textContent=JSON.stringify(preview,null,2);$('#company-apply').disabled=!!preview.errors.length;}catch(err){toast(err.message);}};
-  $('#company-apply').onclick=async()=>{try{await api('/company/import/apply',{...original,digest:preview.digest});toast('Импорт сохранён. Пароли выдаются отдельно.');await openCompany();}catch(err){toast(err.message);}};
-  $('#company-document').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,fd=new FormData(form),button=form.querySelector('button');button.disabled=true;try{await api('/company/responsibility',{...Object.fromEntries(fd),approved:fd.has('approved')});toast('Документ сохранён');await openCompany();}catch(err){toast(err.message);}finally{button.disabled=false;}};
-  $('#modal').querySelectorAll('[data-issue-person]').forEach(button=>button.onclick=async()=>{try{const r=await api('/company/credential',{id:button.dataset.issuePerson,action:'issue'});toast(r.password?'Пароль показан один раз ниже':'Учётная запись уже имеет пароль');const output=document.createElement('p');output.textContent=r.password||'Для замены используйте сброс в карточке сотрудника';button.after(output);}catch(err){toast(err.message);}});
+  $('#company-preview').onclick=async()=>{try{original={format:$('#company-format').value,text:$('#company-text').value};preview=await call('/company/import/preview',original);$('#company-preview-result').textContent=JSON.stringify(preview,null,2);$('#company-apply').disabled=!!preview.errors.length;}catch(err){if(currentView(view))toast(err.message);}};
+  $('#company-apply').onclick=async()=>{try{await call('/company/import/apply',{...original,digest:preview.digest});toast('Импорт сохранён. Пароли выдаются отдельно.');await openCompany();}catch(err){if(currentView(view))toast(err.message);}};
+  $('#company-document').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,fd=new FormData(form),button=form.querySelector('button');button.disabled=true;try{await call('/company/responsibility',{...Object.fromEntries(fd),approved:fd.has('approved')});toast('Документ сохранён');await openCompany();}catch(err){if(currentView(view))toast(err.message);}finally{button.disabled=false;}};
+  $('#modal').querySelectorAll('[data-issue-person]').forEach(button=>button.onclick=async()=>{try{const r=await call('/company/credential',{id:button.dataset.issuePerson,action:'issue'});toast(r.password?'Пароль показан один раз ниже':'Учётная запись уже имеет пароль');const output=document.createElement('p');output.textContent=r.password||'Для замены используйте сброс в карточке сотрудника';button.after(output);}catch(err){if(currentView(view))toast(err.message);}});
   $('#modal').querySelectorAll('[data-edit-person]').forEach(button=>button.onclick=()=>editPerson(company,button.dataset.editPerson));
 }
 function editPerson(company,id){
+ if(!state?.actor?.admin)return;
  const p=company.people[id];modal(modalHead('Сотрудник: '+p.name)+`<form id="company-person" class="stack"><label>Имя<input name="name" required value="${esc(p.name)}"></label><label>Подразделение<input name="department" value="${esc(p.department)}"></label><label>Должность<input name="position" value="${esc(p.position)}"></label><label>Руководитель<select name="managerId">${options(Object.values(company.people).filter(x=>x.id!==id),p.managerId,'Не указан')}</select></label><label>Роль<select name="role">${options([{id:'employee',name:'Сотрудник'},{id:'owner',name:'Ответственный'},{id:'manager',name:'Руководитель'},{id:'admin',name:'Администратор'}],p.admin?'admin':p.role)}</select></label><label>Телефон<input name="phone" value="${esc(p.phone)}"></label><label>Email<input name="email" value="${esc(p.email)}"></label><label>Предпочитаемый канал<select name="preferredChannel">${options(['web','whatsapp','telegram','max','mail'],p.preferredChannel)}</select></label><label><input type="checkbox" name="active" ${p.active?'checked':''}> Активен</label><button>Сохранить</button></form><button type="button" id="company-reset">Сбросить пароль</button><div id="company-credential"></div><button type="button" id="company-back">Назад</button>`);
+ const view={epoch:uiEpoch,actorId:state.actor.id};
+ const call=(path,body)=>companyRequest(view,path,body);
  $('#company-back').onclick=()=>openCompany().catch(e=>toast(e.message));
- $('#company-person').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,fd=new FormData(form);if(p.active&&!fd.has('active')&&!confirm('Отключить учётную запись? Доступ сотрудника завершится.'))return;try{await api('/company/staff',{...Object.fromEntries(fd),active:fd.has('active'),id,revision:p.revision});toast('Сотрудник сохранён');await openCompany();}catch(err){toast(err.message);}};
- $('#company-reset').onclick=async()=>{try{const r=await api('/company/credential',{id,action:'reset'});$('#company-credential').textContent='Новый пароль (показывается один раз): '+r.password;}catch(err){toast(err.message);}};
+ $('#company-person').onsubmit=async e=>{e.preventDefault();const form=e.currentTarget,fd=new FormData(form);if(p.active&&!fd.has('active')&&!confirm('Отключить учётную запись? Доступ сотрудника завершится.'))return;try{await call('/company/staff',{...Object.fromEntries(fd),active:fd.has('active'),id,revision:p.revision});toast('Сотрудник сохранён');await openCompany();}catch(err){if(currentView(view))toast(err.message);}};
+ $('#company-reset').onclick=async()=>{try{const r=await call('/company/credential',{id,action:'reset'});$('#company-credential').textContent='Новый пароль (показывается один раз): '+r.password;}catch(err){if(currentView(view))toast(err.message);}};
 }
 document.addEventListener('click',e=>{if(e.target.closest('[data-company]'))openCompany().catch(err=>toast(err.message));});
 async function openCompanyChannels(company) {
@@ -41,23 +50,68 @@ async function openCompanyChannels(company) {
     <h3>Настроить канал</h3><p>Секреты вводятся только в эту локальную форму и очищаются после вызова.</p><label>Тип<select id="channel-kind"><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option><option value="max">MAX</option></select></label><div id="channel-fields"></div><button type="button" id="channel-save">Сохранить настройки</button><button type="button" id="telegram-accounts">Загрузить локальные аккаунты Telegram</button><div id="telegram-info"></div>
     <h3>Адрес HTTPS для будущего подключения</h3><p>Требуется отдельно настроенный TLS reverse proxy; доступ с телефона не проверен.</p><label>HTTPS origin<input id="external-origin" placeholder="https://company.example"></label><button type="button" id="external-save">Сохранить адрес</button><p id="webhook-description"></p>
     <h3>Выбранное письмо Gmail</h3><p>Выберите одно наблюдаемое письмо; открытие может изменить статус прочтения. Вложения не импортируются.</p><button type="button" id="mail-load">Загрузить подключения Gmail</button><select id="mail-connection"></select><button type="button" id="mail-candidates">Показать доступные письма</button><div id="mail-list"></div><button type="button" id="mail-import" disabled>Подтвердить импорт выбранного письма</button><pre id="mail-result"></pre><button type="button" id="channels-back">Назад к компании</button>`);
-  let challenge=null,proof=null,list=null,selected=null,accounts=[];
+  const view={epoch:uiEpoch,actorId:state.actor.id};
+  const call=(path,body)=>companyRequest(view,path,body);
+  let challenge=null,proof=null,list=null,selected=null,accounts=[],mailGeneration=0;
+  function clearMailSelection(){mailGeneration++;selected=null;$('#mail-import').disabled=true;$('#mail-result').textContent='';}
   $('#channels-back').onclick=()=>openCompany().catch(e=>toast(e.message));
-  $('#authority-register').onclick=async()=>{try{await api('/company/authority/configure',{});toast('Регистрация полномочий выполнена. Доставка не проверена.');}catch(e){toast(e.message);}};
-  $('#channels-status').onclick=async()=>{try{const status=await api('/company/connections');$('#channels-view').textContent=JSON.stringify(status,null,2);$('#bind-channel').innerHTML=options((status.bindings?.channels||[]).map(c=>({id:c.channelId,name:c.channel+' · '+c.channelId+' · '+(c.reason||'состояние получено')})));const host=$('#binding-actions');host.replaceChildren();for(const binding of status.bindings?.bindings||[]){if(!binding.enabled||binding.channelId==='owner-modus')continue;const button=document.createElement('button');button.type='button';button.textContent='Отозвать '+binding.employeeId+' · '+binding.channelId;button.onclick=async()=>{try{await api('/company/binding/revoke',{bindingId:binding.bindingId,operationId:crypto.randomUUID(),expectedRevision:binding.revision});toast('Привязка отозвана');button.disabled=true;}catch(e){toast(e.message);}};host.append(button);}}catch(e){$('#channels-view').textContent=e.message;}};
-  $('#delivery-status').onclick=async()=>{try{$('#delivery-view').textContent=JSON.stringify(await api('/company/delivery'),null,2);}catch(e){toast(e.message);}};
-  $('#bind-prepare').onclick=async()=>{try{challenge=await api('/company/binding/prepare',{employeeId:$('#bind-person').value,channelId:$('#bind-channel').value});$('#bind-result').textContent=JSON.stringify(challenge,null,2);$('#bind-proof').disabled=false;$('#bind-confirm').disabled=true;}catch(e){toast(e.message);}};
-  $('#bind-proof').onclick=async()=>{try{proof=await api('/company/binding/proof',{challengeId:challenge.challengeId});$('#bind-result').textContent=JSON.stringify(proof,null,2);$('#bind-confirm').disabled=false;}catch(e){toast(e.message);}};
-  $('#bind-confirm').onclick=async()=>{try{await api('/company/binding/confirm',{challengeId:challenge.challengeId,proofId:proof.proofId});$('#bind-confirm').disabled=true;toast('Привязка подтверждена провайдером');}catch(e){toast(e.message);}};
+  $('#authority-register').onclick=async()=>{try{await call('/company/authority/configure',{});toast('Регистрация полномочий выполнена. Доставка не проверена.');}catch(e){if(currentView(view))toast(e.message);}};
+  $('#channels-status').onclick=async()=>{try{const status=await call('/company/connections');$('#channels-view').textContent=JSON.stringify(status,null,2);$('#bind-channel').innerHTML=options((status.bindings?.channels||[]).map(c=>({id:c.channelId,name:c.channel+' · '+c.channelId+' · '+(c.reason||'состояние получено')})));const host=$('#binding-actions');host.replaceChildren();for(const binding of status.bindings?.bindings||[]){if(!binding.enabled||binding.channelId==='owner-modus')continue;const button=document.createElement('button');button.type='button';button.textContent='Отозвать '+binding.employeeId+' · '+binding.channelId;button.onclick=async()=>{try{await call('/company/binding/revoke',{bindingId:binding.bindingId,operationId:crypto.randomUUID(),expectedRevision:binding.revision});toast('Привязка отозвана');button.disabled=true;}catch(e){if(currentView(view))toast(e.message);}};host.append(button);}}catch(e){if(currentView(view))$('#channels-view').textContent=e.message;}};
+  $('#delivery-status').onclick=async()=>{try{$('#delivery-view').textContent=JSON.stringify(await call('/company/delivery'),null,2);}catch(e){if(currentView(view))toast(e.message);}};
+  $('#bind-prepare').onclick=async()=>{try{challenge=await call('/company/binding/prepare',{employeeId:$('#bind-person').value,channelId:$('#bind-channel').value});$('#bind-result').textContent=JSON.stringify(challenge,null,2);$('#bind-proof').disabled=false;$('#bind-confirm').disabled=true;}catch(e){if(currentView(view))toast(e.message);}};
+  $('#bind-proof').onclick=async()=>{try{proof=await call('/company/binding/proof',{challengeId:challenge.challengeId});$('#bind-result').textContent=JSON.stringify(proof,null,2);$('#bind-confirm').disabled=false;}catch(e){if(currentView(view))toast(e.message);}};
+  $('#bind-confirm').onclick=async()=>{try{await call('/company/binding/confirm',{challengeId:challenge.challengeId,proofId:proof.proofId});$('#bind-confirm').disabled=true;toast('Привязка подтверждена провайдером');}catch(e){if(currentView(view))toast(e.message);}};
   function fields(){const kind=$('#channel-kind').value;const common='<label>ID канала<input name="channelId" required></label><label>ID организации<input name="organizationId" required></label>';const specific=kind==='telegram'?`<label>Локальный аккаунт<select name="account">${options(accounts.map(a=>({id:a.account,name:a.label+' · '+(a.reason||'готов')})))}</select></label><label>Bot ID выбранного аккаунта<input name="botId" readonly value="${esc(accounts[0]?.botId||'')}"></label>`:kind==='whatsapp'?['phoneId','wabaId','graphVersion','accessToken','appSecret','verifyToken'].map(x=>`<label>${x}<input name="${x}" ${/Token|Secret/.test(x)?'type="password" autocomplete="off"':''} required></label>`).join(''):['botId','accessToken','webhookSecret'].map(x=>`<label>${x}<input name="${x}" ${/Token|Secret/.test(x)?'type="password" autocomplete="off"':''} required></label>`).join('');$('#channel-fields').innerHTML=common+specific;const account=$('#channel-fields [name=account]');if(account)account.onchange=()=>{$('#channel-fields [name=botId]').value=accounts.find(a=>a.account===account.value)?.botId||'';};}
   $('#channel-kind').onchange=fields;fields();
-  $('#telegram-accounts').onclick=async()=>{try{const [r,local]=await Promise.all([api('/company/telegram-accounts'),api('/company/telegram-local')]);accounts=r.accounts;fields();const info=$('#telegram-info');info.replaceChildren();info.append(document.createTextNode(accounts.length?'Выберите существующий локальный аккаунт.':'Локальные аккаунты не найдены.'));if(local.managementUrl){const link=document.createElement('a');link.href=local.managementUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent=' Управление локальным Telegram';info.append(link);}}catch(e){$('#telegram-info').textContent='Список недоступен: '+e.message;}};
-  $('#channel-save').onclick=async()=>{const fieldsRoot=$('#channel-fields'),values=Object.fromEntries([...fieldsRoot.querySelectorAll('input,select')].map(x=>[x.name,x.value]));try{await api('/company/channel/configure',{...values,channel:$('#channel-kind').value});toast('Настройка сохранена; фактический обмен требует отдельной проверки.');}catch(e){toast(e.message);}finally{fieldsRoot.querySelectorAll('input[type=password]').forEach(x=>x.value='');}};
-  try{const setting=await api('/company/external-origin');$('#external-origin').value=setting.origin||'';$('#webhook-description').textContent=setting.origin?'Настроенный origin; сеть не проверена. Webhook: '+setting.origin+'/webhooks/employee/<channelId>':'Публичный адрес не настроен.';}catch(e){toast(e.message);}
-  $('#external-save').onclick=async()=>{try{const r=await api('/company/external-origin',{origin:$('#external-origin').value.trim()});$('#webhook-description').textContent=r.origin?'Настроено; сеть не проверена. Webhook: '+r.origin+'/webhooks/employee/<channelId>':'Публичный адрес не настроен.';}catch(e){toast(e.message);}};
-  $('#mail-load').onclick=async()=>{try{const rows=await api('/company/mail/connections');$('#mail-connection').innerHTML=options(rows.map(x=>({id:x.id,name:x.label})));}catch(e){toast(e.message);}};
-  $('#mail-candidates').onclick=async()=>{try{list=await api('/company/mail/candidates',{connection:$('#mail-connection').value});const host=$('#mail-list');host.replaceChildren();for(const item of list.items||[]){const b=document.createElement('button');b.type='button';b.textContent=item.sender+' · '+item.subject;b.onclick=async()=>{try{selected=await api('/company/mail/select',{connection:$('#mail-connection').value,rowId:item.rowId,subject:item.subject,sender:item.sender,revision:list.revision});$('#mail-result').textContent='Выбрано: '+item.sender+' · '+item.subject+'\nСнимок: '+selected.snapshotId+'; проверьте и подтвердите импорт.';$('#mail-import').disabled=false;}catch(e){toast(e.message);}};host.append(b);}}catch(e){toast(e.message);}};
-  $('#mail-import').onclick=async()=>{try{const r=await api('/company/mail/import',{});$('#mail-result').textContent='Источник: '+r.source+'\nТема: '+r.subject+'\n\n'+r.body;$('#mail-import').disabled=true;}catch(e){toast(e.message);}};
+  $('#telegram-accounts').onclick=async()=>{try{const [r,local]=await Promise.all([call('/company/telegram-accounts'),call('/company/telegram-local')]);accounts=r.accounts;fields();const info=$('#telegram-info');info.replaceChildren();info.append(document.createTextNode(accounts.length?'Выберите существующий локальный аккаунт.':'Локальные аккаунты не найдены.'));if(local.managementUrl){const link=document.createElement('a');link.href=local.managementUrl;link.target='_blank';link.rel='noopener noreferrer';link.textContent=' Управление локальным Telegram';info.append(link);}}catch(e){if(currentView(view))$('#telegram-info').textContent='Список недоступен: '+e.message;}};
+  $('#channel-save').onclick=async()=>{const fieldsRoot=$('#channel-fields'),values=Object.fromEntries([...fieldsRoot.querySelectorAll('input,select')].map(x=>[x.name,x.value]));try{await call('/company/channel/configure',{...values,channel:$('#channel-kind').value});toast('Настройка сохранена; фактический обмен требует отдельной проверки.');}catch(e){if(currentView(view))toast(e.message);}finally{fieldsRoot.querySelectorAll('input[type=password]').forEach(x=>x.value='');}};
+  try{const setting=await call('/company/external-origin');$('#external-origin').value=setting.origin||'';$('#webhook-description').textContent=setting.origin?'Настроенный origin; сеть не проверена. Webhook: '+setting.origin+'/webhooks/employee/<channelId>':'Публичный адрес не настроен.';}catch(e){if(currentView(view))toast(e.message);}
+  if(!currentView(view))return;
+  $('#external-save').onclick=async()=>{try{const r=await call('/company/external-origin',{origin:$('#external-origin').value.trim()});$('#webhook-description').textContent=r.origin?'Настроено; сеть не проверена. Webhook: '+r.origin+'/webhooks/employee/<channelId>':'Публичный адрес не настроен.';}catch(e){if(currentView(view))toast(e.message);}};
+  $('#mail-connection').onchange=()=>{clearMailSelection();list=null;$('#mail-list').replaceChildren();};
+  $('#mail-load').onclick=async()=>{
+    clearMailSelection(); list=null; $('#mail-list').replaceChildren();
+    try{const rows=await call('/company/mail/connections');$('#mail-connection').innerHTML=options(rows.map(x=>({id:x.id,name:x.label})));}
+    catch(error){if(currentView(view))toast(error.message);}
+  };
+  $('#mail-candidates').onclick=async()=>{
+    clearMailSelection();list=null;const generation=mailGeneration, connection=$('#mail-connection').value;
+    $('#mail-list').replaceChildren();
+    try{
+      const result=await call('/company/mail/candidates',{connection});
+      if(generation!==mailGeneration)return;
+      list=result;const host=$('#mail-list');
+      for(const item of list.items||[]){
+        const button=document.createElement('button');button.type='button';button.textContent=item.sender+' · '+item.subject;
+        button.onclick=async()=>{
+          clearMailSelection();const selectionGeneration=mailGeneration;
+          try{
+            const snapshot=await call('/company/mail/select',{connection,rowId:item.rowId,subject:item.subject,sender:item.sender,revision:result.revision});
+            if(selectionGeneration!==mailGeneration)return;
+            selected={snapshotId:snapshot.snapshotId,hash:snapshot.hash,revision:snapshot.revision};
+            $('#mail-result').textContent='Выбрано: '+item.sender+' · '+item.subject+'\nСнимок: '+selected.snapshotId+'; проверьте и подтвердите импорт.';
+            $('#mail-import').disabled=false;
+          }catch(error){if(currentView(view))toast(error.message);}
+        };
+        host.append(button);
+      }
+    }catch(error){if(currentView(view))toast(error.message);}
+  };
+  $('#mail-import').onclick=async()=>{
+    if(!selected)return;
+    const expected={...selected},generation=mailGeneration,button=$('#mail-import');button.disabled=true;
+    try{
+      const result=await call('/company/mail/import',expected);
+      if(generation!==mailGeneration)return;
+      $('#mail-result').textContent='Источник: '+result.source+'\nТема: '+result.subject+'\n\n'+result.body;
+      selected=null;
+    }catch(error){
+      if(!currentView(view)||generation!==mailGeneration)return;
+      if(error.status===409){clearMailSelection();list=null;$('#mail-list').replaceChildren();}
+      else button.disabled=false;
+      toast(error.message);
+    }
+  };
 }
 
 document.addEventListener('submit',async e=>{
