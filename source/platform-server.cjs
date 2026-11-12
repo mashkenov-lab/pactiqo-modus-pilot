@@ -72,7 +72,7 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
    if(post&&p.startsWith('/api/company/binding/')){if(!binding)fail('Адаптер не подключён');const action=p.slice('/api/company/binding/'.length);if(!['prepare','proof','confirm','revoke'].includes(action))fail('Действие не найдено',404);return json(res,200,await binding[action](a,body));}
    if(req.method==='GET'&&p==='/api/company/mail/connections'){if(!mail)fail('Адаптер не подключён');return json(res,200,await mail.connections(a));}
    if(req.method==='GET'&&p==='/api/company/mail'){if(!mail)fail('Адаптер не подключён');return json(res,200,mail.snapshot(a));}
-   if(post&&p.startsWith('/api/company/mail/')){if(!mail)fail('Адаптер не подключён');const action=p.slice('/api/company/mail/'.length),methods={candidates:'candidates',select:'select',stage:'stage',import:'importSelected'};if(!methods[action])fail('Действие не найдено',404);return json(res,200,await mail[methods[action]](a,body));}
+   if(post&&p.startsWith('/api/company/mail/')){if(!mail)fail('Адаптер не подключён');const action=p.slice('/api/company/mail/'.length),methods={candidates:'candidates',select:'select',preview:'preview',stage:'stage',import:'importSelected'};if(!methods[action])fail('Действие не найдено',404);return json(res,200,await mail[methods[action]](a,body));}
    if(req.method==='GET'&&p==='/api/company')return json(res,200,store.companySnapshot(a));
    if(post&&p==='/api/company/import/preview')return json(res,200,store.previewStaffImport(a,body));
    if(post&&p==='/api/company/import/apply')return json(res,200,store.applyStaffImport(a,body));
@@ -82,7 +82,7 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
    const room=p.match(/^\/api\/cases\/([a-f0-9-]+)\/workroom(?:\/(message|plan|advice))?$/);
    if(room){const [,id,action]=room;if(req.method==='GET'&&!action)return json(res,200,workroom.snapshot(a,id));if(post&&action==='message')return json(res,200,workroom.post(a,{...body,caseId:id},{source:'web'}));if(post&&action==='plan')return json(res,200,workroom.savePlan(a,{...body,caseId:id}));if(post&&action==='advice')return json(res,200,workroom.requestAdvice(a,{...body,caseId:id}));}
    const card=p.match(/^\/api\/card\/([A-Za-z0-9_-]+)$/);if(req.method==='GET'&&card)return json(res,200,workroom.snapshot(a,cards.resolve(card[1],a)));
-   if(post&&p==='/api/logout'){auth.logout(token);res.setHeader('Set-Cookie','modus_r5=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,200,{ok:true});}
+   if(post&&p==='/api/logout'){mail?.invalidateSelection(a);auth.logout(token);res.setHeader('Set-Cookie','modus_r5=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');return json(res,200,{ok:true});}
    if(req.method==='GET'&&p==='/api/state')return json(res,200,{...store.snapshot(a),messenger:messenger.snapshot(a)});
    if(req.method==='GET'&&p==='/api/messaging')return json(res,200,await messenger.status(a));
    if(post&&p==='/api/messaging/config')return json(res,200,messenger.configure(a,body));

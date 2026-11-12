@@ -13,19 +13,54 @@ class AdapterMail {
     const p=this.admin(actor), result=await this.transport.mailControl('adapter_gmail_candidates',{connection});
     this.admin({id:p.id});return result;
   }
+  beginSelection(actorId) {
+    return this.store.atomic(()=>{
+      this.state.selectionGeneration=(this.state.selectionGeneration||0)+1;
+      this.state.preview=null;
+      this.state.selected=null;
+      this.state.selectionActorId=actorId;
+      return this.state.selectionGeneration;
+    });
+  }
+  invalidateSelection(actor) {
+    if(actor?.id&&(this.state.selectionActorId===actor.id||this.state.selected?.actorId===actor.id||this.state.preview?.actorId===actor.id))this.beginSelection(null);
+  }
+  checkGeneration(generation) {
+    if(this.state.selectionGeneration!==generation)throw Object.assign(Error('Выбор письма изменился'),{status:409});
+  }
   async select(actor,input){
-    const p=this.admin(actor);
+    const p=this.admin(actor),generation=this.beginSelection(p.id);
     const {connection,rowId,subject,sender,revision}=input;
     const result=await this.transport.mailControl('adapter_gmail_select',{connection,rowId,subject,sender,revision});
-    this.admin({id:p.id});
-    if(!result?.snapshotId||!result.hash||!result.revision)throw Error('Снимок письма не получен');
-    return this.store.atomic(()=>{this.state.selected={...result,actorId:p.id};return structuredClone(this.state.selected);});
+    this.admin({id:p.id});this.checkGeneration(generation);
+    if(!result||['snapshotId','hash','revision'].some(k=>typeof result[k]!=='string'||!result[k]||result[k].length>512))throw Error('Снимок письма не получен');
+    return this.store.atomic(()=>{this.checkGeneration(generation);this.state.selected={snapshotId:result.snapshotId,hash:result.hash,revision:result.revision,actorId:p.id};return structuredClone(this.state.selected);});
   }
-  async stage(actor,{connection}){
-    const p=this.admin(actor),result=await this.transport.mailControl('adapter_mail_snapshot_stage',{connection});
-    this.admin({id:p.id});
-    if(!result?.snapshotId||!result.hash||!result.revision)throw Error('Снимок письма не получен');
-    return this.store.atomic(()=>{this.state.selected={...result,actorId:p.id};return structuredClone(this.state.selected);});
+  async preview(actor,{connection,subject,sender}) {
+    const p=this.admin(actor);
+    if(typeof connection!=='string'||!connection||connection.length>100||typeof subject!=='string'||!subject.trim()||subject.length>500||typeof sender!=='string'||!sender.includes('@')||sender.length>320)throw Object.assign(Error('Укажите подключение, тему и отправителя'),{status:400});
+    const generation=this.beginSelection(p.id);
+    const result=await this.transport.mailControl('adapter_mail_snapshot_preview',{connection,subject,sender});
+    this.admin({id:p.id});this.checkGeneration(generation);
+    const fields=['messageId','sender','subject','accountUrl','revision'];
+    if(!result||fields.some(k=>typeof result[k]!=='string'||!result[k])||result.messageId.length>200||result.subject!==subject||result.sender!==sender||!/^[a-f0-9]{64}$/.test(result.revision)||result.partial!==true||result.untrusted!==true||Object.hasOwn(result,'body')||result.accountUrl.length>2048)throw Error('Метаданные письма не подтверждены');
+    let url;try{url=new URL(result.accountUrl);}catch{throw Error('Адрес почты не подтверждён');}
+    if(url.origin!=='https://mail.google.com'||!/^\/mail\/u\/\d+\/$/.test(url.pathname)||url.username||url.password)throw Error('Адрес почты не подтверждён');
+    const identity=Object.fromEntries(fields.map(k=>[k,result[k]]));
+    return this.store.atomic(()=>{this.checkGeneration(generation);this.state.preview={connection,identity,actorId:p.id,generation,inFlight:false};return {connection,identity:structuredClone(identity),partial:true,untrusted:true};});
+  }
+  async stage(actor,{connection,expectedIdentity}={}) {
+    const p=this.admin(actor),fields=['messageId','sender','subject','accountUrl','revision'],preview=this.state.preview;
+    if(!preview||preview.actorId!==p.id||preview.connection!==connection||preview.inFlight||!expectedIdentity||typeof expectedIdentity!=='object'||Array.isArray(expectedIdentity)||Object.keys(expectedIdentity).sort().join(',')!==[...fields].sort().join(',')||fields.some(k=>typeof expectedIdentity[k]!=='string'||expectedIdentity[k]!==preview.identity[k]))throw Object.assign(Error('Предпросмотр изменился; проверьте письмо заново'),{status:409});
+    const generation=preview.generation,identity=structuredClone(preview.identity);
+    this.store.atomic(()=>{this.checkGeneration(generation);this.state.preview.inFlight=true;});
+    try{
+      const result=await this.transport.mailControl('adapter_mail_snapshot_stage',{connection,expectedIdentity:identity});
+      this.admin({id:p.id});this.checkGeneration(generation);
+      if(!this.state.preview||this.state.preview.actorId!==p.id||this.state.preview.connection!==connection||JSON.stringify(this.state.preview.identity)!==JSON.stringify(identity))throw Object.assign(Error('Предпросмотр изменился'),{status:409});
+      if(!result||['snapshotId','hash','revision'].some(k=>typeof result[k]!=='string'||!result[k]||result[k].length>512))throw Error('Снимок письма не получен');
+      return this.store.atomic(()=>{this.checkGeneration(generation);this.state.preview=null;this.state.selected={snapshotId:result.snapshotId,hash:result.hash,revision:result.revision,actorId:p.id};return structuredClone(this.state.selected);});
+    }catch(error){this.store.atomic(()=>{if(this.state.selectionGeneration===generation&&this.state.preview)this.state.preview.inFlight=false;});throw error;}
   }
   snapshot(actor){this.admin(actor);return structuredClone(this.state);}
   async importSelected(actor,expected){

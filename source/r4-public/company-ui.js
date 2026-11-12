@@ -51,11 +51,14 @@ async function openCompanyChannels(company) {
     <h3>Привязка сотрудника</h3><label>Сотрудник<select id="bind-person">${options(Object.values(company.people).filter(p=>p.active))}</select></label><label>Канал<select id="bind-channel"></select></label><button type="button" id="bind-prepare">Создать запрос</button><button type="button" id="bind-proof" disabled>Проверить входящее подтверждение</button><button type="button" id="bind-confirm" disabled>Подтвердить привязку</button><pre id="bind-result"></pre>
     <h3>Настроить канал</h3><p>Секреты вводятся только в эту локальную форму и очищаются после вызова.</p><label>Тип<select id="channel-kind"><option value="telegram">Telegram</option><option value="whatsapp">WhatsApp</option><option value="max">MAX</option></select></label><div id="channel-fields"></div><button type="button" id="channel-save">Сохранить настройки</button><button type="button" id="telegram-accounts">Загрузить локальные аккаунты Telegram</button><div id="telegram-info"></div>
     <h3>Адрес HTTPS для будущего подключения</h3><p>Требуется отдельно настроенный TLS reverse proxy; доступ с телефона не проверен.</p><label>HTTPS origin<input id="external-origin" placeholder="https://company.example"></label><button type="button" id="external-save">Сохранить адрес</button><p id="webhook-description"></p>
-    <h3>Выбранное письмо Gmail</h3><p>Выберите одно наблюдаемое письмо; открытие может изменить статус прочтения. Вложения не импортируются.</p><button type="button" id="mail-load">Загрузить подключения Gmail</button><select id="mail-connection"></select><button type="button" id="mail-candidates">Показать доступные письма</button><div id="mail-list"></div><button type="button" id="mail-import" disabled>Подтвердить импорт выбранного письма</button><pre id="mail-result"></pre><button type="button" id="channels-back">Назад к компании</button>`);
+    <h3>Выбранное письмо Gmail</h3><p>Выберите одно наблюдаемое письмо; открытие может изменить статус прочтения. Вложения не импортируются.</p><button type="button" id="mail-load">Загрузить подключения Gmail</button><select id="mail-connection"></select><button type="button" id="mail-candidates">Показать доступные письма</button><div id="mail-list"></div>
+    <h4>Проверить уже открытое письмо</h4><p>Предпросмотр показывает только метаданные открытого письма и сам по себе не подтверждает связь со строкой входящих. Проверьте тему, отправителя и аккаунт перед чтением содержимого.</p><label>Точная тема<input id="mail-subject" maxlength="500"></label><label>Точный email отправителя<input id="mail-sender" maxlength="320"></label><button type="button" id="mail-preview">Показать метаданные открытого письма</button><pre id="mail-preview-result"></pre><button type="button" id="mail-stage" disabled>Подтверждаю это открытое письмо — прочитать содержимое</button>
+    <button type="button" id="mail-import" disabled>Подтвердить импорт выбранного письма</button><pre id="mail-result"></pre><button type="button" id="channels-back">Назад к компании</button>`);
   const view={epoch:uiEpoch,actorId:state.actor.id};
   const call=(path,body)=>companyRequest(view,path,body);
-  let challenge=null,proof=null,list=null,selected=null,accounts=[],mailGeneration=0;
-  function clearMailSelection(){mailGeneration++;selected=null;$('#mail-import').disabled=true;$('#mail-result').textContent='';}
+  let challenge=null,proof=null,list=null,selected=null,openedPreview=null,accounts=[],mailGeneration=0,mailBusy=false;
+  function syncMailControls(){for(const id of ['mail-load','mail-candidates','mail-preview'])$('#'+id).disabled=mailBusy;$('#mail-stage').disabled=mailBusy||!openedPreview;$('#mail-import').disabled=mailBusy||!selected;$('#mail-connection').disabled=mailBusy;$('#mail-subject').disabled=mailBusy;$('#mail-sender').disabled=mailBusy;$('#mail-list').querySelectorAll('button').forEach(button=>button.disabled=mailBusy);}
+  function clearMailSelection(){mailGeneration++;selected=null;openedPreview=null;$('#mail-result').textContent='';$('#mail-preview-result').textContent='';syncMailControls();}
   $('#channels-back').onclick=()=>openCompany().catch(e=>toast(e.message));
   $('#authority-register').onclick=async()=>{try{await call('/company/authority/configure',{});toast('Регистрация полномочий выполнена. Доставка не проверена.');}catch(e){if(currentView(view))toast(e.message);}};
   $('#channels-status').onclick=async()=>{try{const status=await call('/company/connections');$('#channels-view').textContent=JSON.stringify(status,null,2);$('#bind-channel').innerHTML=options((status.bindings?.channels||[]).map(c=>({id:c.channelId,name:c.channel+' · '+c.channelId+' · '+(c.reason||'состояние получено')})));const host=$('#binding-actions');host.replaceChildren();for(const binding of status.bindings?.bindings||[]){if(!binding.enabled||binding.channelId==='owner-modus')continue;const button=document.createElement('button');button.type='button';button.textContent='Отозвать '+binding.employeeId+' · '+binding.channelId;button.onclick=async()=>{try{await call('/company/binding/revoke',{bindingId:binding.bindingId,operationId:crypto.randomUUID(),expectedRevision:binding.revision});toast('Привязка отозвана');button.disabled=true;}catch(e){if(currentView(view))toast(e.message);}};host.append(button);}}catch(e){if(currentView(view))$('#channels-view').textContent=e.message;}};
@@ -71,14 +74,17 @@ async function openCompanyChannels(company) {
   if(!currentView(view))return;
   $('#external-save').onclick=async()=>{try{const r=await call('/company/external-origin',{origin:$('#external-origin').value.trim()});$('#webhook-description').textContent=r.origin?'Настроено; сеть не проверена. Webhook: '+r.origin+'/webhooks/employee/<channelId>':'Публичный адрес не настроен.';}catch(e){if(currentView(view))toast(e.message);}};
   $('#mail-connection').onchange=()=>{clearMailSelection();list=null;$('#mail-list').replaceChildren();};
+  $('#mail-subject').oninput=clearMailSelection;
+  $('#mail-sender').oninput=clearMailSelection;
   $('#mail-load').onclick=async()=>{
-    clearMailSelection(); list=null; $('#mail-list').replaceChildren();
-    try{const rows=await call('/company/mail/connections');$('#mail-connection').innerHTML=options(rows.map(x=>({id:x.id,name:x.label})));}
+    clearMailSelection(); list=null; $('#mail-list').replaceChildren();const generation=mailGeneration;mailBusy=true;syncMailControls();
+    try{const rows=await call('/company/mail/connections');if(generation!==mailGeneration)return;$('#mail-connection').innerHTML=options(rows.map(x=>({id:x.id,name:x.label})));}
     catch(error){if(currentView(view))toast(error.message);}
+    finally{if(currentView(view)&&generation===mailGeneration){mailBusy=false;syncMailControls();}}
   };
   $('#mail-candidates').onclick=async()=>{
     clearMailSelection();list=null;const generation=mailGeneration, connection=$('#mail-connection').value;
-    $('#mail-list').replaceChildren();
+    $('#mail-list').replaceChildren();mailBusy=true;syncMailControls();
     try{
       const result=await call('/company/mail/candidates',{connection});
       if(generation!==mailGeneration)return;
@@ -87,21 +93,37 @@ async function openCompanyChannels(company) {
         const button=document.createElement('button');button.type='button';button.textContent=item.sender+' · '+item.subject;
         button.onclick=async()=>{
           clearMailSelection();const selectionGeneration=mailGeneration;
+          $('#mail-subject').value=item.subject||'';$('#mail-sender').value=item.senderEmail||'';
+          mailBusy=true;syncMailControls();
           try{
             const snapshot=await call('/company/mail/select',{connection,rowId:item.rowId,subject:item.subject,sender:item.sender,revision:result.revision});
             if(selectionGeneration!==mailGeneration)return;
             selected={snapshotId:snapshot.snapshotId,hash:snapshot.hash,revision:snapshot.revision};
             $('#mail-result').textContent='Выбрано: '+item.sender+' · '+item.subject+'\nСнимок: '+selected.snapshotId+'; проверьте и подтвердите импорт.';
             $('#mail-import').disabled=false;
-          }catch(error){if(currentView(view))toast(error.message);}
+          }catch(error){if(currentView(view)&&selectionGeneration===mailGeneration){$('#mail-result').textContent='Связь со строкой входящих не подтверждена. Можно отдельно проверить метаданные уже открытого письма.';toast(error.message);}}finally{if(currentView(view)&&selectionGeneration===mailGeneration){mailBusy=false;syncMailControls();}}
         };
         host.append(button);
       }
-    }catch(error){if(currentView(view))toast(error.message);}
+    }catch(error){if(currentView(view)&&generation===mailGeneration)toast(error.message);}
+    finally{if(currentView(view)&&generation===mailGeneration){mailBusy=false;syncMailControls();}}
+  };
+  $('#mail-preview').onclick=async()=>{
+    clearMailSelection();const generation=mailGeneration,connection=$('#mail-connection').value,subject=$('#mail-subject').value,sender=$('#mail-sender').value;
+    mailBusy=true;syncMailControls();
+    try{const result=await call('/company/mail/preview',{connection,subject,sender});if(generation!==mailGeneration)return;openedPreview={connection,identity:result.identity};const i=openedPreview.identity;$('#mail-preview-result').textContent='Открытое письмо (связь со строкой входящих не подтверждена):\nОтправитель: '+i.sender+'\nТема: '+i.subject+'\nID: '+i.messageId+'\nАккаунт: '+i.accountUrl+'\nВерсия: '+i.revision;}
+    catch(error){if(currentView(view)&&generation===mailGeneration)toast(error.message);}
+    finally{if(currentView(view)&&generation===mailGeneration){mailBusy=false;syncMailControls();}}
+  };
+  $('#mail-stage').onclick=async()=>{
+    if(!openedPreview)return;const expected=structuredClone(openedPreview),generation=mailGeneration;mailBusy=true;syncMailControls();
+    try{const snapshot=await call('/company/mail/stage',{connection:expected.connection,expectedIdentity:expected.identity});if(generation!==mailGeneration)return;openedPreview=null;selected={snapshotId:snapshot.snapshotId,hash:snapshot.hash,revision:snapshot.revision};$('#mail-result').textContent='Содержимое подготовлено. Проверьте выбранное письмо и отдельно подтвердите импорт.';}
+    catch(error){if(currentView(view)&&generation===mailGeneration){clearMailSelection();toast(error.message);}}
+    finally{if(currentView(view)){mailBusy=false;syncMailControls();}}
   };
   $('#mail-import').onclick=async()=>{
     if(!selected)return;
-    const expected={...selected},generation=mailGeneration,button=$('#mail-import');button.disabled=true;
+    const expected={...selected},generation=mailGeneration;mailBusy=true;syncMailControls();
     try{
       const result=await call('/company/mail/import',expected);
       if(generation!==mailGeneration)return;
@@ -110,9 +132,8 @@ async function openCompanyChannels(company) {
     }catch(error){
       if(!currentView(view)||generation!==mailGeneration)return;
       if(error.status===409){clearMailSelection();list=null;$('#mail-list').replaceChildren();}
-      else button.disabled=false;
       toast(error.message);
-    }
+    }finally{if(currentView(view)){mailBusy=false;syncMailControls();}}
   };
 }
 
