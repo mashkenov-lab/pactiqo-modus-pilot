@@ -167,4 +167,18 @@ async function openAttentionSettings(company) {
 // Legacy values not divisible by an hour stay exact in minutes; changing units
 // changes interpretation visibly and invalidates the existing preview as usual.
 function reminderField(name,label,minutes){const unit=minutes.every(x=>x%1440===0)?1440:minutes.every(x=>x%60===0)?60:1;return `<label>${label}<input name="${name}" value="${minutes.map(x=>x/unit).join(',')}" required inputmode="decimal"><select name="${name}Unit" aria-label="Единица: ${label}">${options([{id:'60',name:'Часы'},{id:'1440',name:'Дни'},{id:'1',name:'Минуты · точное прежнее значение'}],String(unit))}</select><small>${name==='beforeMinutes'?'Несколько интервалов — через запятую. ':''}Интервалы календарные; отправка учитывает рабочее окно. Один день — 24 часа. Старые значения в минутах сохраняются точно.</small></label>`;}
-function reminderMinutes(form,name){const unit=Number(form.get(name+'Unit'));const parts=String(form.get(name)).split(',');if(![1,60,1440].includes(unit)||parts.some(x=>!x.trim()))throw Error('Укажите интервал и единицу времени.');const values=parts.map(x=>Number(x.trim())*unit);if(values.some(x=>!Number.isSafeInteger(x)||x<0))throw Error('Интервал должен соответствовать целому числу минут.');return values;}
+function reminderMinutes(form,name){
+ const unit=Number(form.get(name+'Unit')),parts=String(form.get(name)).split(',');
+ if(![1,60,1440].includes(unit)||parts.some(x=>!x.trim()))throw Error('Укажите интервал и единицу времени.');
+ if(name!=='beforeMinutes'&&parts.length!==1)throw Error('Укажите один интервал; дробную часть отделяйте точкой.');
+ return parts.map(part=>{
+  const text=part.trim();
+  // Bound parsing cost, then convert the decimal rational exactly, without
+  // binary floating-point residue or rounding fractional minutes into validity.
+  if(text.length>128||!/^\+?(?:\d+(?:\.\d*)?|\.\d+)$/.test(text))throw Error('Интервал должен соответствовать целому числу минут.');
+  const [whole,fraction='']=text.replace(/^\+/,'').split('.'),scale=10n**BigInt(fraction.length);
+  const numerator=BigInt((whole||'0')+fraction)*BigInt(unit);
+  if(numerator%scale!==0n||numerator/scale>BigInt(Number.MAX_SAFE_INTEGER))throw Error('Интервал должен соответствовать целому числу минут.');
+  return Number(numerator/scale);
+ });
+}
