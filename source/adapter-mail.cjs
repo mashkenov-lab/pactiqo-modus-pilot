@@ -38,7 +38,15 @@ class AdapterMail {
       if(operation.state==='unknown'||operation.state==='sending'){
         const receipt=await this.transport.messagingV2.receipt({operationId:operation.operationId});
         this.admin({id:p.id});
-        return this.settle(p,selected,operation.operationId,receipt);
+        if(receipt?.operationId!==operation.operationId || receipt.state!=='imported')throw Error('Импорт ещё не подтверждён');
+        if(operation.snapshotHash!==selected.hash || JSON.stringify(this.state.selected)!==JSON.stringify(selected))throw Error('Снимок письма изменился');
+        const approval=await this.transport.mailControl('adapter_mail_snapshot_approve',{space:'modus-platform',snapshotId:selected.snapshotId,revision:selected.revision,hash:selected.hash});
+        this.admin({id:p.id});
+        if(JSON.stringify(this.state.selected)!==JSON.stringify(selected))throw Error('Выбранное письмо изменилось');
+        const payload={snapshotId:selected.snapshotId,revision:selected.revision,operationId:operation.operationId};
+        this.authority.issue(p,{action:'mail_import',payload,grantId:approval.grantId,expiresAt:approval.expiresAt,purpose:'approved-mail'});
+        const retrieved=await this.transport.messagingV2.importMail({...payload,grantId:approval.grantId});
+        return this.settle(p,selected,operation.operationId,retrieved);
       }
       throw Error('Операция импорта не может быть повторена автоматически');
     }
@@ -47,7 +55,7 @@ class AdapterMail {
     if(JSON.stringify(this.state.selected)!==JSON.stringify(selected))throw Error('Выбранное письмо изменилось');
     const operationId=randomUUID(),payload={snapshotId:selected.snapshotId,revision:selected.revision,operationId};
     this.authority.issue(p,{action:'mail_import',payload,grantId:approval.grantId,expiresAt:approval.expiresAt,purpose:'approved-mail'});
-    this.store.atomic(()=>{this.state.operations[operationId]={...payload,state:'sending'};});
+    this.store.atomic(()=>{this.state.operations[operationId]={...payload,snapshotHash:selected.hash,state:'sending'};});
     try{
       const receipt=await this.transport.messagingV2.importMail({...payload,grantId:approval.grantId});
       this.admin({id:p.id});

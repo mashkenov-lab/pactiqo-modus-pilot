@@ -29,3 +29,18 @@ function casePrompt(context) {
   return {instruction, context:bounded};
 }
 module.exports = {casePrompt, validateCaseAdvice};
+
+// Questions are preserved in full; long advice is visibly shortened for messaging.
+function formatAdvice(value, limit = 2800) {
+  const questions = (value.questions || []).map((q, i) => `${i + 1}. ${q}`).join('\n');
+  const head = questions ? `Вопросы для уточнения:\n${questions}\n\n` : '';
+  const reply = `Ответ: ${value.reply || ''}`;
+  const plan = value.proposedPlan ? `\n\nПредложение ИИ для плана (не утверждено): ${value.proposedPlan}` : '';
+  const full = head + reply + plan;
+  if (full.length <= limit) return full;
+  const notice = '\n… Текст сокращён. Полный ответ и план доступны в общем обсуждении.';
+  const budget = Math.max(0, limit - head.length - notice.length);
+  const replyBudget = Math.min(reply.length, Math.floor(budget * 0.6));
+  return head + reply.slice(0, replyBudget) + plan.slice(0, budget - replyBudget) + notice;
+}
+module.exports.formatAdvice = formatAdvice;

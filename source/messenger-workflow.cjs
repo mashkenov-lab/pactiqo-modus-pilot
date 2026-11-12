@@ -73,7 +73,7 @@ class MessengerWorkflow{
    await this.workroom.processPending();
    e=this.state.events[e.eventId];const job=this.store.suite.caseAdviceJobs[e.caseJobId];
    if(!job||['stale','error'].includes(job.status))return this.complete(e,'Общее сообщение сохранено; совет сейчас недоступен или контекст изменился.');
-   if(job.status==='ready'){const view=this.workroom.snapshot(this.store.person(e.employeeId),job.caseId);return this.complete(e,'Общее обсуждение '+view.number+':\n'+job.result.reply);}
+   if(job.status==='ready'){const view=this.workroom.snapshot(this.store.person(e.employeeId),job.caseId);return this.complete(e,'Общее обсуждение '+view.number+':\n'+require('./case-assistant.cjs').formatAdvice(job.result));}
    return;
   }
   if(e.state==='received'){

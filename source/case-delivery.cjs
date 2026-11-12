@@ -19,6 +19,13 @@ class CaseDelivery {
     if(!event || (row.eventSource==='assignment'?event.title:event.body)!==row.eventBody || (row.eventSource==='assignment'&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
     return {person,item,event};
   }
+  channel(status, binding) {
+    return (status.channels || []).find(c=>c.channelId===binding.channelId) || (status.providers || []).find(c=>c.channelId===binding.channelId) || {channel:binding.channelId};
+  }
+  choose(status, person, bindings) {
+    const available=bindings.filter(b=>{const c=this.channel(status,b);return b.enabled&&b.employeeId===person.id&&b.channelId!=='owner-modus'&&c.configured!==false&&(c.ready!==false||(c.channel==='telegram'&&c.reason==='live_acceptance_required'));});
+    return available.find(b=>this.channel(status,b).channel===person.preferredChannel) || available[0] || bindings.find(b=>b.enabled&&b.employeeId===person.id&&b.channelId==='owner-modus');
+  }
   collect(status){
     const bindings=status.bindings||[];
     for(const [caseId,room] of Object.entries(this.store.suite.caseWorkspaces||{})){
@@ -28,9 +35,10 @@ class CaseDelivery {
         const item=this.store.state.modus.cases[caseId];if(!item)continue;
         for(const recipientId of new Set([item.authorId,item.ownerId].filter(Boolean))){
           if(recipientId===event.creatorId)continue;
+          if(event.type==='assistant_reply' && event.requestId && Object.values(this.store.suite.messaging?.events||{}).some(e=>e.caseJobId===event.requestId&&e.caseId===caseId&&e.employeeId===recipientId))continue;
           let person;try{person=this.store.person(recipientId);this.store.get(caseId,person);}catch{continue;}
           const available=bindings.filter(b=>b.enabled&&b.employeeId===recipientId);
-          const chosen=available.find(b=>b.channelId===person.preferredChannel)||available[0];
+          const chosen=this.choose(status,person,available);
           if(!chosen){const operationId=this.id(event.id,recipientId,'unbound');this.store.atomic(()=>{this.state.outbox[operationId]||={operationId,caseId,eventId:event.id,recipientId,state:'unsupported',reason:'no_verified_binding'};});continue;}
           const operationId=this.id(event.id,recipientId,chosen.bindingId);
           if(this.state.outbox[operationId])continue;
@@ -39,7 +47,7 @@ class CaseDelivery {
           if(url && (typeof url!=='string'||url.length>1000))throw Error('Некорректная ссылка карточки');
           const suffix=url?'\n'+url:'';const text=(label+' · '+item.number+'\n'+event.body).slice(0,4000-suffix.length)+suffix;
           const payload={caseId,bindingId:chosen.bindingId,operationId,kind:'result',text};
-          this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId,eventId:event.id,eventBody:event.body,creatorId:event.creatorId,recipientId,bindingId:chosen.bindingId,channelId:chosen.channelId,fallback:chosen.channelId!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:chosen.channelId==='owner-modus'?'unsupported':'queued',reason:chosen.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+          this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId,eventId:event.id,eventBody:event.body,creatorId:event.creatorId,recipientId,bindingId:chosen.bindingId,channelId:chosen.channelId,fallback:this.channel(status,chosen).channel!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:chosen.channelId==='owner-modus'?'unsupported':'queued',reason:chosen.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
         }
       }
       this.store.atomic(()=>{this.state.cursors[caseId]=room.events.length;});
@@ -52,13 +60,13 @@ class CaseDelivery {
       let person,item;try{person=this.store.person(note.recipient);item=this.store.get(note.caseId,person);}catch{continue;}
       if(item.ownerId!==person.id)continue;
       const choices=(status.bindings||[]).filter(b=>b.enabled&&b.employeeId===person.id);
-      const binding=choices.find(b=>b.channelId===person.preferredChannel)||choices[0];if(!binding)continue;
+      const binding=this.choose(status,person,choices);if(!binding)continue;
       const operationId=this.id(note.id,person.id,binding.bindingId);
       if(this.state.outbox[operationId])continue;
       const url=this.cardLinkFor?.(note.caseId,person.id);
       const text=('Вам назначено обращение '+item.number+' · '+note.title+(url?'\n'+url:'')).slice(0,4000);
       const payload={caseId:note.caseId,bindingId:binding.bindingId,operationId,kind:'assignment',text};
-      this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:'assignment',eventBody:note.title,creatorId:null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:binding.channelId!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+      this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:'assignment',eventBody:note.title,creatorId:null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:this.channel(status,binding).channel!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
     }
     this.store.atomic(()=>{this.state.notificationSeen=Object.fromEntries(this.store.platform.notifications.map(n=>[n.id,true]));});
   }

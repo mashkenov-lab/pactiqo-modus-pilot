@@ -1,7 +1,7 @@
 'use strict';
 
 const {randomUUID, createHash} = require('node:crypto');
-const {casePrompt, validateCaseAdvice} = require('./case-assistant.cjs');
+const {casePrompt, validateCaseAdvice, formatAdvice} = require('./case-assistant.cjs');
 const activeStores = new WeakSet();
 const clone = value => structuredClone(value);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -167,7 +167,7 @@ class CaseWorkspace {
           const revision=++room.revision;
           const message={id:randomUUID(),caseId:job.caseId,role:'assistant',authorId:null,body:validated.reply,createdAt:this.stamp(),visibility:'case-participants',revision,requestId:job.requestId};
           room.messages.push(message);
-          room.events.push({id:randomUUID(),type:'assistant_reply',caseId:job.caseId,creatorId:null,revision,body:message.body});
+          room.events.push({id:randomUUID(),type:'assistant_reply',caseId:job.caseId,creatorId:null,revision,requestId:job.requestId,body:formatAdvice(validated)});
           job.status='ready'; job.result=validated; job.updatedAt=this.stamp(); job.error=null;
         });
       } catch (error) {
