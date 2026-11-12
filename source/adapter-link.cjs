@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path'),{createHash,randomUUID}=re
 const {PlatformClient}=require('./vendor/adapter-platform/client.cjs');
 const {MessagingClient}=require('./vendor/adapter-platform/messaging.cjs');
 const {MessagingV2Client}=require('./vendor/adapter-platform/messaging-v2.cjs');
-const {casePrompt,validateCaseAdvice}=require('./case-assistant.cjs');
+const {casePrompt,caseAdviceSchema,validateCaseAdvice}=require('./case-assistant.cjs');
 const {validate,schema,prompt}=require('./desk-analyzer.cjs');
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 class AdapterLink{
@@ -24,10 +24,9 @@ class AdapterLink{
  async analyze(c,context){const input=prompt(c,context)+'\nJSON schema: '+JSON.stringify(schema);if(input.length>24000||Buffer.byteLength(JSON.stringify({method:'adapter_request_submit',params:{clientRequestId:c.analysisRequestId,text:input}}),'utf8')>65000)throw Error('Диалог превышает лимит входа Адаптера. Выберите прямой разбор Codex либо сократите исходный текст.');try{await this.client.submit({requestId:c.analysisRequestId,text:input});return await this.collect(c,context,1000);}catch(e){if(e.message==='ADAPTER_NOT_READY')e.message='ИИ пока не подключён. Администратору нужно выполнить вход в Codex или подключить действующий Адаптер. Сообщение сохранено.';const job=this.client.jobs[c.analysisRequestId];if(job&&['submitting','accepted','unknown','running','pending'].includes(job.state))e.pending=true;throw e;}}
  async analyzeCase(job,context){
   const bounded=casePrompt(context);
-  const schema={type:'object',additionalProperties:false,required:['reply','questions','proposedPlan','sourceRefs','uncertainty'],properties:{reply:{type:'string'},questions:{type:'array',items:{type:'string'}},proposedPlan:{type:'string'},sourceRefs:{type:'array',items:{type:'string'}},uncertainty:{type:'string'}}};
   let text;
   for(;;){
-   text=JSON.stringify({...bounded,schema});
+   text=JSON.stringify({...bounded,schema:caseAdviceSchema(bounded.context)});
    const envelope=JSON.stringify({method:'adapter_request_submit',params:{clientRequestId:job.requestId,text}});
    if(text.length<=24000&&Buffer.byteLength(envelope,'utf8')<=65000)break;
    if(bounded.context.documents?.length){bounded.context.documents.pop();bounded.context.contextPartial=true;continue;}
