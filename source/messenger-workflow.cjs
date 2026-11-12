@@ -11,7 +11,7 @@ const text=(v,label,max)=>{if(typeof v!=='string'||!v.trim()||Array.from(v).leng
 class MessengerWorkflow{
  constructor({store,analysis,transport,workroom,cardLinkFor,now=()=>Date.now()}){
   Object.assign(this,{store,analysis,transport,workroom,cardLinkFor,now,busy:false,timer:null,lastError:null,providerStatus:null});
-  this.inFlight=new Map();this.controlFlight=new Map();
+  this.inFlight=new Map();this.controlFlight=new Map();this.scheduleCursor=0;
   if(!store.suite.messaging)store.atomic(()=>{store.suite.messaging={schema:1,enabled:false,events:{},sessions:{},outbox:{}};});
   if(!this.state.rejected||!this.state.progress)store.atomic(()=>{this.state.rejected||={};this.state.progress||={};});
   this.progressBusy=false;this.flushBusy=false;
@@ -85,9 +85,9 @@ class MessengerWorkflow{
    if(this.workroom){
     const visible=this.store.snapshot(a).cases.filter(x=>x.phase!=='draft');
     const find=number=>visible.filter(x=>x.number?.toLowerCase()===number.toLowerCase());
-    if(/^(?:мои задачи|мои обращения|что с моими задачами|что с моей задачей|статус моих задач)[?!.\s]*$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+x.phase).join('\n'):'У вас нет доступных карточек.');}
+    if(/^(?:мои задачи|мои обращения|что с моими задачами|что с моей задачей|статус моих задач)[?!.\s]*$/iu.test(body)){const list=visible.filter(x=>x.authorId===a.id||x.ownerId===a.id);return this.complete(e,list.length?list.slice(0,30).map(x=>x.number+' · '+x.title+' · '+this.store.snapshotStatus(x.phase)).join('\n'):'У вас нет доступных карточек.');}
     const card=body.match(/^(?:карточка|задача|статус(?: задачи)?|что с задачей)\s+(MT-\d+)[?!.\s]*$/iu);
-    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0],url=this.cardLinkFor?.(row.taskId,a.id);this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+row.phase+(url?'\n'+url:'\nСсылка на карточку сейчас недоступна.')+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
+    if(card){const matches=find(card[1]);if(matches.length!==1)return this.complete(e,matches.length?'Найдено несколько карточек; уточните выбор в системе.':'Карточка не найдена или недоступна.');const row=matches[0],url=this.cardLinkFor?.(row.taskId,a.id);this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=row.taskId;this.state.events[e.eventId].caseId=row.taskId;});return this.complete(this.state.events[e.eventId],row.number+' · '+row.title+' · '+this.store.snapshotStatus(row.phase)+(url?'\n'+url:'\nСсылка на карточку сейчас недоступна.')+'\nОбсуждение видно автору и исполнителю. Напишите «обсудить '+row.number+' текст».');}
     if(/^\/(выход|exit)$/iu.test(body)){this.store.atomic(()=>{this.state.sessions[e.sessionId].selectedCaseId=null;});return this.complete(e,'Вы вышли из общего обсуждения.');}
     const discussion=body.match(/^обсудить\s+(MT-\d+)\s+([\s\S]+)$/iu);
     const selected=s.selectedCaseId && !discussion && !body.startsWith('/') && !confirmation ? visible.find(x=>x.taskId===s.selectedCaseId) : null;
@@ -128,9 +128,23 @@ class MessengerWorkflow{
    this.store.atomic(()=>{const updated=this.store.finishAnalysis(a,c.id,e.analysisRequestId,result),s=this.state.sessions[e.sessionId];e=this.state.events[e.eventId];if(s.localConversationId!==updated.id){e.state='completed';return;}const r=updated.analysis;if(!updated.entity&&r.category&&r.department&&!r.missing?.length)this.offer(e,updated,r.reply||'Подготовил карточку.');else this.queue(e,(r.reply||r.missing?.map(x=>x.question).join('\n')||r.summary)+(this.prefix(e)?'\n\nОтветьте: '+this.prefix(e)+' ваш ответ':''));e.state='completed';e.error=null;});
   }catch(error){
    if(this.state.events[e.eventId]?.state!=='analyzing')return;
-   if([401,403].includes(error.status)){this.store.atomic(()=>{const current=this.state.events[e.eventId];if(current){current.state='error';current.error='Права или привязка изменились во время разбора';}});return;}
+   let invalid=[401,403].includes(error.status);
+   if(!invalid){try{const actor=this.store.person(e.employeeId);if(actor.revision!==a.revision||actor.role!==a.role||!!actor.admin!==!!a.admin)invalid=true;}catch(err){if([401,403].includes(err.status))invalid=true;}}
+   if(!invalid){try{const status=await this.transport.status();if(!(e.transportVersion==='v2'&&status.v2Available===false)&&!status.bindings?.some(b=>b.enabled&&b.channelId===e.channelId&&b.employeeId===e.employeeId&&b.conversationId===e.conversationId))invalid=true;}catch{}}
+   if(this.state.events[e.eventId]?.state!=='analyzing')return;
+   if(invalid){this.invalidateAnalysis(e.eventId);return;}
    this.store.atomic(()=>{const latest=this.store.conversation(a,c.id);if(latest.analysisRequestId===e.analysisRequestId&&['pending','waiting_adapter'].includes(latest.analysisStatus))this.store.finishAnalysis(a,c.id,e.analysisRequestId,null,error);e=this.state.events[e.eventId];e.error=String(error.message).slice(0,300);if(error.pending){e.state='analyzing';}else{e.state='error';this.queue(e,'Сообщение сохранено, но сейчас не удалось получить ответ ИИ. Администратор видит ошибку. Повторить разбор: '+this.command(e,'/повторить'));}});
   }
+ }
+ invalidateAnalysis(eventId){
+  this.store.atomic(()=>{const event=this.state.events[eventId];if(!event||!['received','analyzing','case_analyzing'].includes(event.state))return;
+   const conversation=event.localConversationId&&this.store.suite.conversations[event.localConversationId];
+   if(conversation&&conversation.actorId===event.employeeId&&conversation.analysisRequestId===event.analysisRequestId&&['pending','waiting_adapter'].includes(conversation.analysisStatus)){
+    (conversation.abandonedAnalyses||=[]).push({requestId:event.analysisRequestId,at:stamp(),reason:'Локальное ожидание прекращено: изменились права или привязка; задача провайдера может завершиться отдельно.'});
+    conversation.analysisStatus='error';conversation.analysis=null;conversation.error='Права или привязка изменились; локальный результат не применяется. Задача провайдера может завершиться отдельно.';conversation.revision++;
+   }
+   event.state='error';event.error='Права или привязка изменились во время разбора';
+  });
  }
  async flush(){
   const blockedEvents=new Set();
@@ -189,7 +203,7 @@ class MessengerWorkflow{
     let receipt;
     if(op.state==='queued'){
      const status=await this.transport.status(),event=this.state.events[op.eventId],available=status.v2Capabilities?.progressAck;
-     if(!this.state.enabled||!event||event.state!=='received'||!event.acked||available?.enabled!==true||available.channels?.[event.channel]!==true||(status.v2Channels?.some(c=>c.channelId===event.channelId&&c.progressAck!==true))||Object.values(this.state.outbox).some(x=>x.eventId===op.eventId)){this.store.atomic(()=>{this.state.progress[op.operationId].state='cancelled';});continue;}
+     if(!this.state.enabled||!event||!['received','analyzing','case_analyzing'].includes(event.state)||!event.acked||available?.enabled!==true||available.channels?.[event.channel]!==true||(status.v2Channels?.some(c=>c.channelId===event.channelId&&c.progressAck!==true))||Object.values(this.state.outbox).some(x=>x.eventId===op.eventId)){this.store.atomic(()=>{this.state.progress[op.operationId].state='cancelled';});continue;}
      this.store.atomic(()=>{this.state.progress[op.operationId].state='sending';});receipt=await this.transport.progress({eventId:op.eventId,operationId:op.operationId});
     }else receipt=await this.transport.progressReceipt({operationId:op.operationId});
     if(receipt?.operationId!==op.operationId||receipt.eventId!==op.eventId||!['sending','sent','accepted','delivered','read','failed-before-send','unknown'].includes(receipt.state))throw Error('Квитанция не соответствует операции');
@@ -206,12 +220,13 @@ class MessengerWorkflow{
  }
  schedule(){
   const events=Object.values(this.state.events).sort((a,b)=>a.sequence-b.sequence);
-  for(const event of events){
+  const ordered=[...events.filter(e=>e.sequence>this.scheduleCursor),...events.filter(e=>e.sequence<=this.scheduleCursor)];
+  for(const event of ordered){
    if(this.inFlight.size>=2)break;
    if([...this.controlFlight.keys()].some(id=>this.state.events[id]?.sessionId===event.sessionId)||!event.acked || !['received','analyzing','case_analyzing'].includes(event.state)||this.inFlight.has(event.sessionId))continue;
    if(events.some(x=>x.sessionId===event.sessionId&&x.sequence<event.sequence&&['received','analyzing','case_analyzing'].includes(x.state)))continue;
-   const job=(async()=>{try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);this.store.atomic(()=>{const current=this.state.events[event.eventId];if([400,403,404,409].includes(e.status))current.state='error';current.error=this.lastError;});}})();
-   this.inFlight.set(event.sessionId,job);
+   const job=(async()=>{try{await this.process(event);}catch(e){this.lastError=String(e.message).slice(0,300);if([401,403].includes(e.status)){this.invalidateAnalysis(event.eventId);return;}this.store.atomic(()=>{const current=this.state.events[event.eventId];if([400,404,409].includes(e.status))current.state='error';current.error=this.lastError;});}})();
+   this.scheduleCursor=event.sequence;this.inFlight.set(event.sessionId,job);
    void job.finally(()=>{this.inFlight.delete(event.sessionId);});
   }
  }
