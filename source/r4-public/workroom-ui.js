@@ -7,7 +7,7 @@ async function openWorkroom(id) {
   const opening = newView();
   if (!opening.actorId) return;
   stopRoom();
-  const [room, card] = await Promise.all([api('/cases/' + id + '/workroom'), api('/cases/' + id)]);
+  const [room, card, attention] = await Promise.all([api('/cases/' + id + '/workroom'), api('/cases/' + id), api('/cases/' + id + '/attention')]);
   if (!currentView(opening)) return;
   openRoomId = id;
   modal(modalHead(room.title, '<span class="badge" id="room-phase"></span>') + `
@@ -15,16 +15,19 @@ async function openWorkroom(id) {
     <div id="room-header"></div><div id="room-content" aria-live="polite"></div>
     <form id="room-message" class="stack"><label>Общее сообщение<textarea name="body" required maxlength="4000"></textarea></label><button class="primary">Сохранить сообщение</button></form>
     <button type="button" id="room-advice">Помочь с планом</button>
-    <form id="room-plan" class="stack"><label>План исполнителя<textarea name="body" required maxlength="4000"></textarea></label><label>Срок плана, отдельно от срока обращения<input name="dueAt" type="datetime-local" required></label><button>Сохранить план</button></form>
+    <form id="room-plan" class="stack"><label>План исполнителя<textarea name="body" required maxlength="4000"></textarea></label><label>Срок обращения<input name="dueAt" type="datetime-local" required></label><label>Причина изменения срока<textarea name="reason" maxlength="2000"></textarea></label><p id="room-plan-status" aria-live="polite"></p><button>Сохранить план</button></form>
+    <section><h3>Сопровождение</h3><div id="attention-current"></div><form id="attention-progress" class="stack"><label>Что сделано<textarea name="body" maxlength="2000"></textarea></label><label>Следующий шаг<textarea name="nextStep" maxlength="2000"></textarea></label><label>Сообщённое препятствие<textarea name="blocked" maxlength="2000"></textarea></label><label>Следующая проверка<input name="checkAt" type="datetime-local"></label><button>Сохранить прогресс</button><p id="attention-progress-status" aria-live="polite"></p></form><h4>История напоминаний и доставки</h4><div id="attention-history"></div></section>
     <button type="button" id="room-case">Действия и результат обращения</button>`);
   const view = {epoch:uiEpoch,actorId:opening.actorId};
-  let latest = room, latestCard = card, requestSequence = 0, planBusy = false;
+  let latest = room, latestCard = card, latestAttention=attention, requestSequence = 0, planBusy = false;
+  const planForm=$('#room-plan');planForm.dataset.roomRevision=room.revision;planForm.dataset.caseRevision=room.caseRevision;
+  let progressRevision=attention.progress[id]?.revision||0;
   const active = () => currentView(view) && openRoomId === id && $('#modal').open && !!$('#room-content');
   function paint(data, currentCard) {
     if (!active()) return;
     latest = data; latestCard = currentCard;
     $('#room-phase').textContent = data.number + ' · ' + (data.phase === 'new' ? 'Зарегистрировано' : state.statuses[data.phase] || 'Состояние уточняется');
-    $('#room-header').innerHTML = `<p>Участники: ${data.participants.map(p => esc(p.name || p.id)+' · '+esc(roles[p.role]||p.role||'роль неизвестна')).join(', ')}</p><p><strong>Ответственный:</strong> ${esc(currentCard.owner||'не назначен')} · <strong>Результат:</strong> ${esc(currentCard.resolution?.body||'пока не представлен')}</p>`;
+    $('#room-header').innerHTML = `<p>Участники: ${data.participants.map(p => esc(p.name || p.id)+' · '+esc(roles[p.role]||p.role||'роль неизвестна')).join(', ')}</p><p><strong>Ответственный:</strong> ${esc(currentCard.owner||'не назначен')} · <strong>Срок:</strong> ${esc(currentCard.dueAt?dt(currentCard.dueAt):'не указан')} · <strong>Результат:</strong> ${esc(currentCard.resolution?.body||'пока не представлен')}</p>`;
     $('#room-content').innerHTML = `<section><h3>Общее обсуждение</h3>${data.messages.map(m => `<p><strong>${esc(m.authorName || 'ИИ')}</strong>: ${esc(m.body)}</p>`).join('') || '<p>Сообщений пока нет.</p>'}</section>
       <p><strong>План человека:</strong> ${esc(data.plan?.body || 'не сохранён')} ${data.plan ? ' · ' + esc(dt(data.plan.dueAt)) : ''}</p>
       <p><strong>Состояние ИИ:</strong> ${esc(data.ai ? (adviceLabels[data.ai.status] || 'Состояние уточняется') : 'не запрошен')} ${esc(data.ai?.error || '')}</p>
@@ -33,15 +36,23 @@ async function openWorkroom(id) {
     $('#room-plan').querySelectorAll('textarea,input').forEach(element => { element.disabled = !allowed; });
     $('#room-plan button').disabled = !allowed || planBusy;
   }
-  paint(room, card);
+  function paintAttention(data) {
+    if(!active())return;latestAttention=data;const progress=data.progress[id];
+    $('#attention-current').innerHTML=`<p><strong>Следующий шаг:</strong> ${esc(progress?.nextStep||'не указан')} · <strong>Препятствие со слов сотрудника:</strong> ${esc(progress?.blocked||'не сообщено')} · <strong>Следующая проверка:</strong> ${esc(progress?.checkAt?dt(progress.checkAt):'не указана')}</p><p>${['question','review'].includes(latest.phase)?'Ожидается ответ или приёмка автора.':'Следующее действие — у исполнителя.'}</p>`;
+    const labels={queued:'Ожидает отправки; доставка не подтверждена',unsupported:'Канал не подключён; доставка не подтверждена',unknown:'Результат отправки неизвестен',accepted:'Канал принял операцию; доставка не подтверждена',sent:'Отправлено; прочтение не подтверждено',delivered:'Доставлено; прочтение не подтверждено',read:'Прочтение подтверждено',cancelled:'Отменено',failed:'Ошибка доставки',sending:'Отправка выполняется', 'failed-before-send':'Не отправлено'};
+    $('#attention-history').innerHTML=data.events.map(e=>`<p>${esc(dt(e.at))} · ${esc(e.body)}<br>${e.deliveries.length?e.deliveries.map(d=>esc(labels[d.state]||'Состояние неизвестно')).join('; '):'Канал не настроен или доставка ещё не поставлена в очередь'}</p>`).join('')||'<p>Напоминаний пока нет.</p>';
+  }
+  paint(room, card);paintAttention(attention);
+  const pf=$('#attention-progress'),initialProgress=attention.progress[id];if(initialProgress){for(const k of ['body','nextStep','blocked'])pf.elements[k].value=initialProgress[k]||'';if(initialProgress.checkAt){const d=new Date(initialProgress.checkAt);d.setMinutes(d.getMinutes()-d.getTimezoneOffset());pf.elements.checkAt.value=d.toISOString().slice(0,16);}}
+  pf.onsubmit=async e=>{e.preventDefault();const button=pf.querySelector('button');button.disabled=true;try{await api('/cases/'+id+'/attention/progress',{body:pf.elements.body.value,nextStep:pf.elements.nextStep.value,blocked:pf.elements.blocked.value,checkAt:pf.elements.checkAt.value?new Date(pf.elements.checkAt.value).toISOString():null,expectedRevision:progressRevision});if(!active())return;progressRevision++;$('#attention-progress-status').textContent='Прогресс сохранён.';await reload();}catch(error){if(active())$('#attention-progress-status').textContent=error.message+(error.status===409?' Откройте обсуждение заново и проверьте изменения.':'');}finally{if(active())button.disabled=false;}};
   async function reload() {
     if (!active()) return;
     const sequence = ++requestSequence;
     try {
-      const [nextRoom, nextCard] = await Promise.all([api('/cases/'+id+'/workroom'),api('/cases/'+id)]);
+      const [nextRoom, nextCard, nextAttention] = await Promise.all([api('/cases/'+id+'/workroom'),api('/cases/'+id),api('/cases/'+id+'/attention')]);
       if (!active() || sequence !== requestSequence) return;
       if (nextRoom.caseRevision !== nextCard.revision) return;
-      paint(nextRoom,nextCard);
+      paint(nextRoom,nextCard);paintAttention(nextAttention);
     } catch (error) {
       if (!active() || sequence !== requestSequence) return;
       if (error.status === 403 || error.status === 404) {
@@ -57,8 +68,8 @@ async function openWorkroom(id) {
   });
   $('#room-plan').addEventListener('submit', async e => {
     e.preventDefault();const form=e.currentTarget,button=form.querySelector('button');planBusy=true;button.disabled=true;
-    try { await api('/cases/'+id+'/workroom/plan',{body:form.elements.body.value,dueAt:new Date(form.elements.dueAt.value).toISOString(),expectedRevision:latest.revision});if(!active())return;form.reset();await reload();if(active())toast('План сохранён'); }
-    catch(error) { if(active())toast(error.message); } finally { planBusy=false;if(button.isConnected&&active())button.disabled=!(state.actor.id===latestCard.ownerId||state.actor.role==='manager'||state.actor.admin); }
+    try { await api('/cases/'+id+'/workroom/plan',{body:form.elements.body.value,dueAt:new Date(form.elements.dueAt.value).toISOString(),reason:form.elements.reason.value,expectedRevision:Number(form.dataset.roomRevision),expectedCaseRevision:Number(form.dataset.caseRevision)});if(!active())return;form.reset();await reload();if(active()){form.dataset.roomRevision=latest.revision;form.dataset.caseRevision=latest.caseRevision;toast('План сохранён');} }
+    catch(error) { if(active())$('#room-plan-status').textContent=error.message+(error.status===409?' Откройте обсуждение заново и проверьте изменения.':''); } finally { planBusy=false;if(button.isConnected&&active())button.disabled=!(state.actor.id===latestCard.ownerId||state.actor.role==='manager'||state.actor.admin); }
   });
   $('#room-advice').addEventListener('click', async e => {
     const button=e.currentTarget; button.disabled=true;

@@ -9,20 +9,22 @@ const {CaseWorkspace}=require('./case-workspace.cjs');
 const {CardLinks}=require('./card-links.cjs');
 const {AdapterAuthority,BindingAdmin,CaseLinks,CombinedMessengerTransport}=require('./adapter-authority.cjs');
 const {CaseDelivery}=require('./case-delivery.cjs');
+const {CaseAttention}=require('./case-attention.cjs');
 const {AdapterMail}=require('./adapter-mail.cjs');
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status});};
 function csv(rows){const cell=v=>'"'+(/^[=+@\-\t\r]/.test(String(v??''))?'\'':'')+String(v??'').replaceAll('"','""')+'"';return '\ufeff'+rows.map(row=>row.map(cell).join(';')).join('\r\n');}
 function releaseBuild(dir){try{const m=JSON.parse(fs.readFileSync(path.join(dir,'suite-manifest.json'),'utf8'));return m.schema===1&&typeof m.version==='string'&&/^r6-4\.0\.0-[A-Za-z0-9._-]+$/.test(m.version)?m.version:null;}catch{return null;}}
-function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS_R4_DATA_DIR||path.join(__dirname,'data-r5'),seed=process.env.MODUS_DEMO!=='0',passwords,analyzer,bitrixOptions,adapter,messaging,enableAdapter=false}={}){
+function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS_R4_DATA_DIR||path.join(__dirname,'data-r5'),seed=process.env.MODUS_DEMO!=='0',passwords,analyzer,bitrixOptions,adapter,messaging,enableAdapter=false,now=Date.now}={}){
  const store=new PlatformStore(dir);if(seed)store.seedDataset();const auth=new LocalAuth(dir,{passwords,resolveActor:id=>store.person(id),listActors:()=>Object.values(store.people)});
  analyzer||=new DeskAnalyzer({dir});if(!adapter&&process.env.MODUS_ADAPTER_PROFILE)adapter=new (require('./adapter-link.cjs').AdapterLink)({profile:process.env.MODUS_ADAPTER_PROFILE,dir,executable:process.env.MODUS_ADAPTER_EXE,codexExecutable:process.env.MODUS_CODEX_EXE});const bitrix=new BitrixConnector(store,bitrixOptions);
  const workroom=new CaseWorkspace({store,analysis:adapter?.caseAnalysis});
+ const attention=new CaseAttention({store,now});
  const cards=new CardLinks({store});
  const cardLinkFor=(caseId,recipientId)=>{const origin=store.suite.externalOrigin||('http://127.0.0.1:'+server.address().port);return origin+'/card/'+cards.issue(caseId,recipientId);};
  const authority=adapter?new AdapterAuthority({store,dir}):null;
  const binding=adapter?.messagingV2?new BindingAdmin({store,transport:adapter.messagingV2,authority}):null;
  const externalLinks=binding?new CaseLinks({store,transport:adapter.messagingV2,authority}):null;
- const delivery=binding?new CaseDelivery({store,workroom,transport:adapter.messagingV2,authority,links:externalLinks,cardLinkFor}):null;
+ const delivery=binding?new CaseDelivery({store,workroom,transport:adapter.messagingV2,authority,links:externalLinks,cardLinkFor,now}):null;
  const mail=adapter?new AdapterMail({store,transport:adapter,authority}):null;
  const transport=adapter?new CombinedMessengerTransport({store,legacy:adapter.messaging,v2:adapter.messagingV2,authority}):messaging;
  const messenger=new MessengerWorkflow({store,analysis:adapter,transport:messaging||transport,workroom,cardLinkFor});
@@ -74,6 +76,11 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
    if(req.method==='GET'&&p==='/api/company/mail/connections'){if(!mail)fail('Адаптер не подключён');return json(res,200,await mail.connections(a));}
    if(req.method==='GET'&&p==='/api/company/mail'){if(!mail)fail('Адаптер не подключён');return json(res,200,mail.snapshot(a));}
    if(post&&p.startsWith('/api/company/mail/')){if(!mail)fail('Адаптер не подключён');const action=p.slice('/api/company/mail/'.length),methods={candidates:'candidates',select:'select',preview:'preview',stage:'stage',import:'importSelected'};if(!methods[action])fail('Действие не найдено',404);return json(res,200,await mail[methods[action]](a,body));}
+   if(req.method==='GET'&&p==='/api/company/attention')return json(res,200,attention.policy(a));
+   if(post&&p==='/api/company/attention/preview'){const result=attention.preview(a,body);return json(res,200,{...result,cases:result.cases.map(c=>({...c,title:store.row(store.get(c.id,a),a).title}))});}
+   if(post&&p==='/api/company/attention/apply')return json(res,200,attention.configure(a,body));
+   const att=p.match(/^\/api\/cases\/([a-f0-9-]+)\/attention(?:\/(progress))?$/);
+   if(att){if(req.method==='GET'&&!att[2])return json(res,200,attention.snapshot(a,{caseId:att[1]}));if(post&&att[2])return json(res,200,attention.setProgress(a,{...body,caseId:att[1]}));}
    if(req.method==='GET'&&p==='/api/company')return json(res,200,store.companySnapshot(a));
    if(post&&p==='/api/company/import/preview')return json(res,200,store.previewStaffImport(a,body));
    if(post&&p==='/api/company/import/apply')return json(res,200,store.applyStaffImport(a,body));
@@ -116,8 +123,8 @@ function createPlatformServer({dir=process.env.MODUS_DATA_DIR||process.env.MODUS
   const assets={'/':['index.html','text/html'],'/app.js':['app.js','text/javascript'],'/suite.js':['suite.js','text/javascript'],'/chat-ui.js':['chat-ui.js','text/javascript'],'/workroom-ui.js':['workroom-ui.js','text/javascript'],'/company-ui.js':['company-ui.js','text/javascript'],'/messenger-ui.js':['messenger-ui.js','text/javascript'],'/styles.css':['styles.css','text/css'],'/demo-desk.json':['demo-desk.json','application/json']};const asset=assets[p]||(/^\/card\/[A-Za-z0-9_-]+$/.test(p)?assets['/']:null);if(req.method==='GET'&&p==='/company-demo.csv'){res.writeHead(200,{'Content-Type':'text/csv; charset=utf-8','Cache-Control':'no-store'});return res.end(fs.readFileSync(path.join(__dirname,'fixtures','company-demo.csv')));}
   if(req.method==='GET'&&asset){res.writeHead(200,{'Content-Type':asset[1]+'; charset=utf-8','Cache-Control':'no-cache','Content-Security-Policy':"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"});return res.end(fs.readFileSync(path.join(__dirname,p==='/demo-desk.json'?'public':'r4-public',asset[0])));}fail('Страница не найдена',404);
  }catch(e){const status=e.status||(e.code==='STORE_CONFLICT'?409:400);if(!res.headersSent)json(res,status,{error:e.message});else res.end();}finally{if(mutation)activeMutations--;}});
- server.once('listening',()=>{messenger.start();workroom.start();if(enableAdapter&&authority&&!store.suite.adapterIntegrationEnabled)store.atomic(()=>{store.suite.adapterIntegrationEnabled=true;});if(store.suite.adapterIntegrationEnabled){void reconnectAuthority();ensureAdapterRetry();}});server.once('close',()=>{clearInterval(adapterRetry);messenger.stop();workroom.stop();delivery?.stop();});
- return {server,store,auth,analyzer,bitrix,messenger,workroom,cards,authority,binding,delivery,mail,beginDrain:()=>{draining=true;drainTimers={messenger:!!messenger.timer,workroom:!!workroom.timer,delivery:!!delivery?.timer};messenger.stop();workroom.stop();delivery?.stop();},endDrain:()=>{draining=false;if(drainTimers?.messenger)messenger.start();if(drainTimers?.workroom)workroom.start();if(drainTimers?.delivery||adapterIntegration.configured)delivery?.start();if(store.suite.adapterIntegrationEnabled)ensureAdapterRetry();drainTimers=null;},get activeMutations(){return activeMutations;},get integrationBusy(){return adapterConnecting;},get integrationRetryActive(){return !!adapterRetry;}};
+ server.once('listening',()=>{messenger.start();workroom.start();attention.start();if(enableAdapter&&authority&&!store.suite.adapterIntegrationEnabled)store.atomic(()=>{store.suite.adapterIntegrationEnabled=true;});if(store.suite.adapterIntegrationEnabled){void reconnectAuthority();ensureAdapterRetry();}});server.once('close',()=>{clearInterval(adapterRetry);messenger.stop();workroom.stop();attention.stop();delivery?.stop();});
+ return {server,store,auth,analyzer,bitrix,messenger,workroom,attention,cards,authority,binding,delivery,mail,beginDrain:()=>{draining=true;drainTimers={messenger:!!messenger.timer,workroom:!!workroom.timer,attention:!!attention.timer,delivery:!!delivery?.timer};messenger.stop();workroom.stop();attention.stop();delivery?.stop();},endDrain:()=>{draining=false;if(drainTimers?.messenger)messenger.start();if(drainTimers?.workroom)workroom.start();if(drainTimers?.attention)attention.start();if(drainTimers?.delivery||adapterIntegration.configured)delivery?.start();if(store.suite.adapterIntegrationEnabled)ensureAdapterRetry();drainTimers=null;},get activeMutations(){return activeMutations;},get integrationBusy(){return adapterConnecting;},get integrationRetryActive(){return !!adapterRetry;}};
 }
 if(require.main===module){const {server}=createPlatformServer(),port=Number(process.env.MODUS_PORT||process.env.MODUS_R4_PORT||4389);server.listen(port,'127.0.0.1',()=>console.log('PACTIQO MODUS R6: http://127.0.0.1:'+port));server.on('error',e=>{console.error(e.message);process.exitCode=1;});}
 module.exports={createPlatformServer,csv,releaseBuild};

@@ -8,7 +8,7 @@ async function openCompany() {
   const people = Object.values(company.people);
   modal(modalHead('Компания и ответственность') + `
     <p>Контакты в справочнике не подтверждают привязку к провайдеру.</p><button type="button" id="company-channels">Каналы и почта</button>
-    <h3>Резервная копия</h3><p>Копия сохраняется в защищённой папке приложения и содержит данные компании. Учётные записи и подключения могут зависеть от этого компьютера.</p><button type="button" id="company-backup">Создать копию</button><p id="company-backup-result"></p>
+    <button type="button" id="company-attention">Сопровождение сроков</button><h3>Резервная копия</h3><p>Копия сохраняется в защищённой папке приложения и содержит данные компании. Учётные записи и подключения могут зависеть от этого компьютера.</p><button type="button" id="company-backup">Создать копию</button><p id="company-backup-result"></p>
     <h3>Сотрудники</h3><div class="table-wrap"><table><thead><tr><th>Имя</th><th>Роль и подразделение</th><th>Статус</th><th>Действия</th></tr></thead><tbody>
     ${people.map(p=>`<tr><td>${esc(p.name)}<small class="subline">${esc(p.id)}</small></td><td>${esc(p.admin?'Администратор':p.role)} · ${esc(p.department)}</td><td>${p.active?'Активен':'Отключён'} · провайдер не подтверждён справочником</td><td><button type="button" data-edit-person="${esc(p.id)}">Изменить</button> <button type="button" data-issue-person="${esc(p.id)}">Выдать пароль</button></td></tr>`).join('')}
     </tbody></table></div>
@@ -23,6 +23,7 @@ async function openCompany() {
     <div>${company.responsibilities.map(d=>`<p><strong>${esc(d.title)}</strong> · ${esc(d.sourceName)} · ${esc(company.people[d.ownerId]?.name||d.ownerId)} · ${d.approved?'утверждён':'черновик'}</p>`).join('')}</div>`);
   const view={epoch:uiEpoch,actorId:opening.actorId};
   const call=(path,body)=>companyRequest(view,path,body);
+  $('#company-attention').onclick=()=>openAttentionSettings(company).catch(err=>toast(err.message));
   $('#company-channels').onclick=()=>openCompanyChannels(company).catch(err=>toast(err.message));
   $('#company-backup').onclick=async e=>{const button=e.currentTarget;button.disabled=true;try{const result=await call('/company/backup',{});$('#company-backup-result').textContent='Создана копия '+result.name+' · файлов: '+result.files+'. Храните её в защищённом месте.';}catch(err){if(currentView(view))$('#company-backup-result').textContent=err.message;}finally{if(button.isConnected)button.disabled=false;}};
   let preview=null, original=null;
@@ -142,3 +143,23 @@ document.addEventListener('submit',async e=>{
   e.preventDefault();const form=e.target,button=form.querySelector('button');button.disabled=true;
   try{const lead=state.communications.leads.find(x=>x.id===form.dataset.id),values=Object.fromEntries(new FormData(form));await api('/leads/'+lead.id+'/action',{...values,action:'assign',revision:lead.revision});$('#modal').close();await refresh();toast('Ответственный назначен');}catch(err){toast(err.message);}finally{button.disabled=false;}
 });
+
+async function openAttentionSettings(company) {
+ const opening=newView(); if(!opening.actorId||!state.actor.admin)return;
+ const setting=await api('/company/attention'); if(!currentView(opening)||!state.actor.admin)return;
+ const p=setting.policy, people=Object.values(company.people).filter(x=>x.active&&x.role==='manager');
+ modal(modalHead('Сопровождение сроков')+`<p>Ассистент — ИИ. Уведомления зависят от подключённого канала; учебные обращения исключены из внешней отправки.</p>
+ <form id="attention-policy" class="stack"><label><input type="checkbox" name="enabled" ${p.enabled?'checked':''}> Включить сопровождение</label>
+ <label>Часовой пояс<input name="timezone" required value="${esc(p.timezone)}"></label><label>Рабочие дни (1–7, через запятую)<input name="workingDays" required value="${p.workingDays.join(',')}"></label>
+ <label>Начало рабочего окна, час<input type="number" name="startHour" value="${p.startHour}" required></label><label>Конец рабочего окна, час<input type="number" name="endHour" value="${p.endHour}" required></label>
+ <label>Напомнить за минут (через запятую)<input name="beforeMinutes" value="${p.beforeMinutes.join(',')}" required></label><label>После срока, минут<input type="number" name="overdueMinutes" value="${p.overdueMinutes}" required></label><label>Руководителю после срока, минут<input type="number" name="escalateMinutes" value="${p.escalateMinutes}" required></label><label>Ответ автора, часов<input type="number" name="responseHours" value="${p.responseHours}" required></label>
+ <label>Резервный руководитель<select name="directorId">${options(people,p.directorId,'Не выбран')}</select></label><label>Существующие обращения<select name="includeExisting" required><option value="">Выберите действие</option><option value="false">Только новые</option><option value="true">Включить существующие</option></select></label>
+ <button type="button" id="attention-preview">Посмотреть обращения</button><div id="attention-preview-result" aria-live="polite"></div><button type="submit" id="attention-apply" disabled>Применить просмотренные настройки</button><p id="attention-policy-result" aria-live="polite"></p></form><button type="button" id="attention-back">Назад</button>`);
+ const view={epoch:uiEpoch,actorId:opening.actorId},form=$('#attention-policy'),apply=$('#attention-apply');let reviewed=null,generation=0;
+ const active=()=>currentView(view)&&state.actor.admin&&form.isConnected&&$('#modal').open;
+ const invalidate=()=>{generation++;reviewed=null;apply.disabled=true;$('#attention-preview-result').textContent='Настройки изменены; нужен новый просмотр.';};form.addEventListener('input',invalidate);form.addEventListener('change',invalidate);
+ const payload=()=>{const f=new FormData(form),list=k=>String(f.get(k)).split(',').map(x=>Number(x.trim()));return {enabled:f.has('enabled'),timezone:String(f.get('timezone')).trim(),workingDays:list('workingDays'),startHour:Number(f.get('startHour')),endHour:Number(f.get('endHour')),beforeMinutes:list('beforeMinutes'),overdueMinutes:Number(f.get('overdueMinutes')),escalateMinutes:Number(f.get('escalateMinutes')),responseHours:Number(f.get('responseHours')),directorId:f.get('directorId')||null,includeExisting:f.get('includeExisting')==='true'};};
+ $('#attention-preview').onclick=async()=>{if(!form.elements.includeExisting.value){$('#attention-policy-result').textContent='Выберите, что делать с существующими обращениями.';return;}const input=payload(),seq=++generation;reviewed=null;apply.disabled=true;try{const result=await companyRequest(view,'/company/attention/preview',input);if(!active()||seq!==generation)return;reviewed={input,digest:result.digest};$('#attention-preview-result').textContent='Подходящих обращений: '+result.cases.length+(result.cases.length?' · '+result.cases.map(x=>x.title||x.id).join(', '):'')+'. Учебные обращения исключены.';apply.disabled=false;}catch(e){if(active()&&seq===generation)$('#attention-policy-result').textContent=e.message;}};
+ form.onsubmit=async e=>{e.preventDefault();if(!reviewed)return;const r=reviewed,seq=generation;apply.disabled=true;try{await companyRequest(view,'/company/attention/apply',{...r.input,revision:setting.revision,previewDigest:r.digest});if(active()&&seq===generation){reviewed=null;$('#attention-policy-result').textContent='Настройки сохранены. Доставка зависит от подключения канала.';}}catch(error){if(active()){reviewed=null;$('#attention-policy-result').textContent=error.message+' Обновите экран и повторите просмотр.';}}};
+ $('#attention-back').onclick=()=>openCompany().catch(e=>toast(e.message));
+}
