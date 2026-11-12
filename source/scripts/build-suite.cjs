@@ -1,7 +1,7 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),{spawnSync}=require('node:child_process');
-const root=path.resolve(__dirname,'..'),version=process.argv[2]||'r6-4.0.0-b1',stage=path.resolve(process.env.MODUS_STAGE_DIR||path.join(root,'release-r6','staging-'+version)),adapter=path.resolve(process.env.MODUS_ADAPTER_BUILD||'D:/PACTIQO/Builds/Adapter/0.2.147/win-unpacked'),adapterVersion=process.env.MODUS_ADAPTER_VERSION||'0.2.147',telegram=process.env.MODUS_TELEGRAM_BRIDGE;
-if(!/^r6-4\.0\.0-b[1-9][0-9]*$/.test(version)||!/^0\.2\.\d+$/.test(adapterVersion))throw Error('Invalid version');
+const root=path.resolve(__dirname,'..'),version=process.argv[2]||'r6-4.0.0-b1',stage=path.resolve(process.env.MODUS_STAGE_DIR||path.join(root,'release-r6','staging-'+version)),adapter=path.resolve(process.env.MODUS_ADAPTER_BUILD||''),adapterVersion=process.env.MODUS_ADAPTER_VERSION||'',telegram=process.env.MODUS_TELEGRAM_BRIDGE;
+if(!process.env.MODUS_ADAPTER_BUILD||!path.isAbsolute(process.env.MODUS_ADAPTER_BUILD)||!/^r6-4\.0\.0-b[1-9][0-9]*$/.test(version)||!/^0\.2\.\d+$/.test(adapterVersion)||path.basename(path.dirname(adapter))!==adapterVersion)throw Error('Invalid version or Adapter build path');
 if(fs.existsSync(stage))throw Error('Stage already exists; choose a fresh immutable version');
 const sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 for(const [relative,key] of [['Adapter.exe','MODUS_ADAPTER_EXE_SHA256'],['resources/app.asar','MODUS_ADAPTER_ASAR_SHA256'],['resources/mcp.cjs','MODUS_ADAPTER_MCP_SHA256']]){const expected=process.env[key];if(!/^[a-f0-9]{64}$/.test(expected||'')||sha(path.join(adapter,relative))!==expected)throw Error('Explicit verified Adapter hash required: '+relative);}
