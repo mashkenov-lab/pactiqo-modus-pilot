@@ -138,3 +138,45 @@ test('invalid calendar dates cannot be approved as plan deadlines',()=>{
   assert.throws(()=>s.room.savePlan(s.owner,{caseId:s.row.taskId,body:'Plan',dueAt:'2030-02-31T00:00:00Z',expectedRevision:0}));
   assert.equal(s.room.snapshot(s.owner,s.row.taskId).plan,null);
 });
+
+test('pending jobs do not starve another room and recover by the same ID',async()=>{
+  const calls=[];
+  const analysis={analyze:async job=>{calls.push(['submit',job.requestId]);if(calls.length===1) throw Object.assign(Error('pending'),{pending:true});return advice;},recover:async job=>{calls.push(['recover',job.requestId]);throw Object.assign(Error('pending'),{pending:true});}};
+  const s=setup(analysis), second=s.store.create(s.author,{key:'two',title:'Другая тема',description:'Описание',department:'Склад',category:'Организация работы'});
+  post(s,s.author);s.room.post(s.author,{caseId:second.taskId,body:'Вопрос 2',key:'two',expectedRevision:0});
+  const a=s.room.requestAdvice(s.author,{caseId:s.row.taskId,key:'a',expectedRevision:1});
+  const b=s.room.requestAdvice(s.author,{caseId:second.taskId,key:'b',expectedRevision:1});
+  await s.room.processPending();await s.room.processPending();
+  assert.deepEqual(calls,[['submit',a.requestId],['submit',b.requestId]]);
+  assert.equal(s.room.snapshot(s.author,second.taskId).ai.status,'ready');
+  await s.room.processPending();assert.deepEqual(calls.at(-1),['recover',a.requestId]);
+});
+
+test('provider result and message settle together after unrelated transaction rollback',async()=>{
+  let finish;const s=setup({analyze:()=>new Promise(r=>finish=r)});
+  post(s,s.author);const job=s.room.requestAdvice(s.author,{caseId:s.row.taskId,key:'a',expectedRevision:1});
+  const running=s.room.processPending();await new Promise(r=>setImmediate(r));
+  assert.throws(()=>s.store.atomic(()=>{throw Error('rollback');}),/rollback/);
+  finish(advice);await running;
+  const view=s.room.snapshot(s.author,s.row.taskId);
+  assert.equal(view.ai.requestId,job.requestId);assert.equal(view.ai.status,'ready');assert.deepEqual(view.ai.result,advice);
+  assert.equal(view.messages.filter(m=>m.role==='assistant').length,1);
+  const restarted=new CaseWorkspace({store:new SuiteStore(s.dir)}).snapshot(s.author,s.row.taskId);
+  assert.equal(restarted.ai.status,'ready');assert.equal(restarted.messages.filter(m=>m.role==='assistant').length,1);
+});
+
+test('round robin persists across restart and gives pending recovery a turn amid new jobs',async()=>{
+  const calls=[];
+  const analysis={analyze:async job=>{calls.push(['submit',job.requestId]);throw Object.assign(Error('pending'),{pending:true});},recover:async job=>{calls.push(['recover',job.requestId]);return advice;}};
+  const s=setup(analysis);post(s,s.author);
+  const first=s.room.requestAdvice(s.author,{caseId:s.row.taskId,key:'first',expectedRevision:1});
+  await s.room.tick();
+  const second=s.store.create(s.author,{key:'second',title:'Два',description:'Описание',department:'Склад',category:'Организация работы'});
+  s.room.post(s.author,{caseId:second.taskId,body:'Вопрос',key:'p',expectedRevision:0});
+  const next=s.room.requestAdvice(s.author,{caseId:second.taskId,key:'next',expectedRevision:1});
+  const store=new SuiteStore(s.dir),room=new CaseWorkspace({store,analysis});
+  await room.tick();await room.tick();
+  assert.deepEqual(calls,[['submit',first.requestId],['recover',first.requestId],['submit',next.requestId]]);
+  assert.equal(room.snapshot(s.author,s.row.taskId).ai.status,'ready');
+  assert.equal(room.snapshot(s.author,second.taskId).ai.status,'pending');
+});

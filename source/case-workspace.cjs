@@ -101,46 +101,89 @@ class CaseWorkspace {
     if (existing && ['queued','submitting','pending'].includes(existing.status)) fail('Совет уже запрошен',409);
     return this.store.atomic(()=>{
       const target=this.ensure(input.caseId), requestId=randomUUID();
-      const job={requestId,caseId:input.caseId,actorId:info.person.id,key,status:'queued',createdAt:this.stamp(),caseRevision:info.task.revision,roomRevision:target.revision,members:members(this.store,info.item),fingerprint:fingerprint(this.store,info,target),error:null,result:null};
+      const order=(this.store.suite.caseAdviceSequence || 0)+1;
+      this.store.suite.caseAdviceSequence=order;
+      const job={requestId,caseId:input.caseId,actorId:info.person.id,key,status:'queued',createdAt:this.stamp(),caseRevision:info.task.revision,roomRevision:target.revision,members:members(this.store,info.item),fingerprint:fingerprint(this.store,info,target),error:null,result:null,queueOrder:order};
       this.store.suite.caseAdviceJobs[requestId]=job; target.adviceKeys[k]=requestId; target.latestJobId=requestId;
       return clone(job);
     });
   }
   async processPending() {
-    if (this.processing || activeStores.has(this.store)) return; this.processing=true; activeStores.add(this.store);
+    if (this.processing || activeStores.has(this.store)) return;
+    this.processing=true;
+    activeStores.add(this.store);
     try {
-      const job=Object.values(this.store.suite.caseAdviceJobs).find(j=>['queued','submitting','pending'].includes(j.status));
-      if (!job) return;
-      const stale = () => {
-        try { const info=caseInfo(this.store,{id:job.actorId},job.caseId); return fingerprint(this.store,info,this.room(job.caseId))!==job.fingerprint; }
-        catch { return true; }
+      const selected=Object.values(this.store.suite.caseAdviceJobs)
+        .filter(job=>['queued','submitting','pending'].includes(job.status))
+        .sort((a,b)=>(a.queueOrder || 0)-(b.queueOrder || 0))[0];
+      if (!selected) return;
+      const requestId=selected.requestId;
+      const expectedFingerprint=selected.fingerprint;
+      const current=()=>this.store.suite.caseAdviceJobs[requestId];
+      const stale=job=>{
+        try {
+          const info=caseInfo(this.store,{id:job.actorId},job.caseId);
+          return fingerprint(this.store,info,this.room(job.caseId))!==job.fingerprint;
+        } catch { return true; }
       };
-      const change = (status,error=null) => this.store.atomic(()=>{ job.status=status; job.error=error; job.updatedAt=this.stamp(); });
-      if (stale()) {change('stale','Контекст изменился');return;}
-      if (!this.analysis) {change('error','Анализатор недоступен');return;}
-      const context=buildCaseContext(this.store,{id:job.actorId},job.caseId,this.room(job.caseId));
+      // All mutations resolve the job in current state. Another store transaction can
+      // roll back and replace the whole state while the provider promise is pending.
+      const transition=(expectedStatus,status,error=null)=>this.store.atomic(()=>{
+        const job=current();
+        if (!job || job.status!==expectedStatus || job.fingerprint!==expectedFingerprint) return false;
+        job.status=status; job.error=error; job.updatedAt=this.stamp();
+        return true;
+      });
+      if (stale(selected)) {transition(selected.status,'stale','Контекст изменился');return;}
+      if (!this.analysis) {transition(selected.status,'error','Анализатор недоступен');return;}
+      const first=selected.status==='queued';
+      const method=first?'analyze':'recover';
+      let expectedStatus=selected.status;
       try {
+        const context=buildCaseContext(this.store,{id:selected.actorId},selected.caseId,this.room(selected.caseId));
         const bounded=casePrompt(context).context;
-        const first=job.status==='queued';
-        if (first) change('submitting');
-        const method=first?'analyze':'recover';
         if (typeof this.analysis[method]!=='function') throw new Error('Получение состояния анализатора недоступно');
-        const result=await this.analysis[method](clone(job),clone(bounded));
-        if (stale()) {change('stale','Контекст изменился');return;}
+        const started=this.store.atomic(()=>{
+          const job=current();
+          if (!job || job.status!==expectedStatus || job.fingerprint!==expectedFingerprint) return null;
+          if (stale(job)) {job.status='stale';job.error='Контекст изменился';job.updatedAt=this.stamp();return null;}
+          const sequence=(this.store.suite.caseAdviceSequence || 0)+1;
+          this.store.suite.caseAdviceSequence=sequence;
+          job.queueOrder=sequence;
+          if (first) job.status='submitting';
+          job.updatedAt=this.stamp();
+          return job;
+        });
+        if (!started) return;
+        expectedStatus=started.status;
+        const result=await this.analysis[method](started,clone(bounded));
         const validated=validateCaseAdvice(result,bounded);
-        if (this.room(job.caseId).messages.length>=5000) throw new Error('Достигнут предел сообщений');
         this.store.atomic(()=>{
-          const room=this.room(job.caseId), revision=++room.revision;
+          const job=current();
+          if (!job || job.status!==expectedStatus || job.fingerprint!==expectedFingerprint) return;
+          if (stale(job)) {job.status='stale';job.error='Контекст изменился';job.updatedAt=this.stamp();return;}
+          const room=this.room(job.caseId);
+          if (room.messages.length>=5000) throw new Error('Достигнут предел сообщений');
+          const revision=++room.revision;
           const message={id:randomUUID(),caseId:job.caseId,role:'assistant',authorId:null,body:validated.reply,createdAt:this.stamp(),visibility:'case-participants',revision,requestId:job.requestId};
-          room.messages.push(message); room.events.push({id:randomUUID(),type:'assistant_reply',caseId:job.caseId,creatorId:null,revision,body:message.body});
+          room.messages.push(message);
+          room.events.push({id:randomUUID(),type:'assistant_reply',caseId:job.caseId,creatorId:null,revision,body:message.body});
           job.status='ready'; job.result=validated; job.updatedAt=this.stamp(); job.error=null;
         });
       } catch (error) {
-        if (stale()) change('stale','Контекст изменился');
-        else if (error.pending) change('pending',String(error.message||'Ожидается ответ').slice(0,500));
-        else change('error',String(error.message||error).slice(0,500));
+        this.store.atomic(()=>{
+          const job=current();
+          if (!job || job.status!==expectedStatus || job.fingerprint!==expectedFingerprint) return;
+          if (stale(job)) {job.status='stale';job.error='Контекст изменился';}
+          else if (error.pending) {job.status='pending';job.error=String(error.message||'Ожидается ответ').slice(0,500);}
+          else {job.status='error';job.error=String(error.message||error).slice(0,500);}
+          job.updatedAt=this.stamp();
+        });
       }
-    } finally { this.processing=false; activeStores.delete(this.store); }
+    } finally {
+      this.processing=false;
+      activeStores.delete(this.store);
+    }
   }
   tick() { return this.processPending(); }
   start() { if (!this.timer) {this.timer=setInterval(()=>this.tick().catch(()=>{}),2500);this.timer.unref();} }
