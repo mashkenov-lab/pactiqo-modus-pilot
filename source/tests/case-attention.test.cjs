@@ -67,3 +67,42 @@ test('review uses author, inactive recipients are suppressed, and closest active
  const service=new CaseAttention({store,now:()=>now}),cfg={...service.policy(admin).policy,enabled:true,includeExisting:true,revision:0};service.configure(admin,{...cfg,previewDigest:service.preview(admin,cfg).digest});store.atomic(()=>{store.people.employee.active=false;});service.tick();assert.equal(service.snapshot(admin).events.length,0);store.atomic(()=>{store.people.employee.active=true;});service.tick();assert.equal(service.snapshot(admin).events[0].recipientId,'employee');
  const {curator}=require('../case-attention.cjs');store.atomic(()=>{store.people.owner.managerId='admin';store.people.owner2.managerId='owner';});assert.equal(curator(store,'owner2',{directorId:null}),'admin');store.atomic(()=>{store.people.admin.active=false;});assert.equal(curator(store,'owner2',{directorId:null}),null);
 });
+
+test('scheduler exposes bounded sanitized errors to admin and continues after failure',()=>{
+ const store=new SuiteStore(fs.mkdtempSync(path.join(os.tmpdir(),'attention-diag-'))),admin=store.actor('admin'),author=store.actor('employee'),service=new CaseAttention({store,now:()=>Date.parse('2030-01-07T06:00:00Z')});
+ const original=service.tick.bind(service);service.tick=()=>{throw Error('PRIVATE case title and secret');};service.start();assert.doesNotThrow(()=>service.runTick());let view=service.snapshot(admin);assert.equal(view.scheduler.lastTickAt,'2030-01-07T06:00:00.000Z');assert.ok(view.scheduler.lastError);assert.ok(!JSON.stringify(view).includes('PRIVATE'));assert.equal(service.snapshot(author).scheduler,undefined);assert.ok(service.timer);service.tick=original;service.runTick();assert.equal(service.snapshot(admin).scheduler.lastError,null);assert.ok(service.timer);service.stop();
+});
+
+async function boundaryFixture(){
+ const {AdapterAuthority}=require('../adapter-authority.cjs'),{CaseDelivery}=require('../case-delivery.cjs');const now=Date.parse('2030-01-07T06:00:00Z'),dir=fs.mkdtempSync(path.join(os.tmpdir(),'attention-boundary-')),store=new SuiteStore(dir),author=store.actor('employee'),admin=store.actor('admin'),owner=store.actor('owner');let c=store.create(author,{key:'boundary',title:'T',description:'D',department:'Склад',category:'Организация работы'});store.atomic(()=>{store.state.tasks.find(t=>t.id===c.taskId).dueAt='2030-01-07T08:00:00.000Z';});
+ const attention=new CaseAttention({store,now:()=>now}),cfg={...attention.policy(admin).policy,enabled:true,includeExisting:true,revision:0};attention.configure(admin,{...cfg,previewDigest:attention.preview(admin,cfg).digest});attention.tick();
+ const authority=new AdapterAuthority({store,dir,now:()=>now}),binding={bindingId:'b',employeeId:'owner',channelId:'telegram',enabled:true,revision:1},status={bindings:[binding],channels:[{channelId:'telegram',channel:'telegram',configured:true,ready:true}],capabilities:{caseNotify:{enabled:true}}};let enterEnsure,releaseEnsure,enterNotify,releaseNotify;const ensureEntered=new Promise(r=>enterEnsure=r),ensureGate=new Promise(r=>releaseEnsure=r),notifyEntered=new Promise(r=>enterNotify=r),notifyGate=new Promise(r=>releaseNotify=r);let attempts=0,sends=0;
+ const transport={status:async()=>status,notify:async p=>{attempts++;enterNotify();await notifyGate;const {grantId,...payload}=p;authority.verify('Bearer '+authority.secret,{space:'modus-platform',grantId,action:'notify',payloadHash:require('../vendor/adapter-platform/grant-hash.cjs').payloadHash(payload)});sends++;return {operationId:p.operationId,state:'sent'};}};
+ const links={ensure:async()=>{enterEnsure();await ensureGate;}};const delivery=new CaseDelivery({store,authority,links,transport,now:()=>now});return {store,attention,authority,delivery,binding,status,owner,admin,c,ensureEntered,releaseEnsure,notifyEntered,releaseNotify,counts:()=>({attempts,sends})};
+}
+
+test('deadline, assignee and binding changes during ensure prevent notify',async()=>{
+ for(const change of ['deadline','assignee','disabled','rebind']){
+  const s=await boundaryFixture(),job=s.delivery.tick();await s.ensureEntered;
+  if(change==='deadline'){const t=s.store.state.tasks.find(t=>t.id===s.c.taskId);s.store.atomic(()=>s.store.update(t.id,{expectedRevision:t.revision,status:t.status,dueAt:'2030-01-08T08:00:00.000Z'}));}
+  if(change==='assignee')s.store.act(s.admin,s.c.taskId,{action:'assign',revision:s.c.revision,ownerId:'owner2',dueAt:'2030-01-07T08:00:00.000Z',body:'Изменение исполнителя'});
+  if(change==='disabled')s.authority.updateBindings({bindings:[{...s.binding,enabled:false,revision:2}]});
+  if(change==='rebind')s.authority.updateBindings({bindings:[{...s.binding,bindingId:'replacement',revision:2}]});
+  s.releaseEnsure();await job;assert.deepEqual(s.counts(),{attempts:0,sends:0},change);const row=Object.values(s.delivery.state.outbox).find(x=>x.eventSource==='attention');assert.equal(row.state,'cancelled',change);
+ }
+});
+
+test('authority callback blocks late deadline, assignee, disabled and rebind changes during notify',async()=>{
+ for(const change of ['deadline','assignee','disabled','rebind']){
+  const s=await boundaryFixture(),job=s.delivery.tick();await s.ensureEntered;s.releaseEnsure();await s.notifyEntered;
+  if(change==='deadline'){const t=s.store.state.tasks.find(t=>t.id===s.c.taskId);s.store.atomic(()=>s.store.update(t.id,{expectedRevision:t.revision,status:t.status,dueAt:'2030-01-08T08:00:00.000Z'}));}
+  if(change==='assignee')s.store.act(s.admin,s.c.taskId,{action:'assign',revision:s.c.revision,ownerId:'owner2',dueAt:'2030-01-07T08:00:00.000Z',body:'Изменение исполнителя'});
+  if(change==='disabled')s.authority.updateBindings({bindings:[{...s.binding,enabled:false,revision:2}]});
+  if(change==='rebind')s.authority.updateBindings({bindings:[{...s.binding,bindingId:'replacement',revision:2}]});
+  s.releaseNotify();await job;assert.deepEqual(s.counts(),{attempts:1,sends:0},change);const row=Object.values(s.delivery.state.outbox).find(x=>x.eventSource==='attention');assert.equal(row.state,'unknown',change);
+ }
+});
+
+test('missing binding remains visible, then verified binding delivers once',async()=>{
+ const s=await boundaryFixture();s.status.bindings=[];await s.delivery.tick();let rows=Object.values(s.delivery.state.outbox);assert.equal(rows.length,1);assert.equal(rows[0].state,'unsupported');assert.equal(rows[0].reason,'no_verified_binding');s.status.bindings=[s.binding];const job=s.delivery.tick();await s.ensureEntered;s.releaseEnsure();await s.notifyEntered;s.releaseNotify();await job;rows=Object.values(s.delivery.state.outbox);assert.equal(rows.length,2);assert.equal(rows.filter(x=>x.state==='sent').length,1);assert.equal(rows.filter(x=>x.state==='unsupported').length,1);assert.deepEqual(s.counts(),{attempts:1,sends:1});await s.delivery.tick();assert.deepEqual(s.counts(),{attempts:1,sends:1});
+});
