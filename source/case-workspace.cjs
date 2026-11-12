@@ -86,11 +86,12 @@ class CaseWorkspace {
     const body=clean(input.body,4000);
     if (!validDate(input.dueAt)) fail('Укажите срок с часовым поясом');
     this.check(room,input.expectedRevision);
+    if(input.expectedCaseRevision!==info.task.revision)fail('Карточка изменена. Обновите её и повторите.',409);
     const dueAt=new Date(input.dueAt).toISOString(), previousDueAt=info.task.dueAt;
     const reason=dueAt!==previousDueAt?clean(input.reason,2000):null;
     return this.store.atomic(()=>{
       if(dueAt!==previousDueAt){
-        this.store.update(input.caseId,{expectedRevision:info.task.revision,status:info.task.status,dueAt});
+        this.store.update(input.caseId,{expectedRevision:input.expectedCaseRevision,status:info.task.status,dueAt});
         this.store.history(info.item,info.person,'deadline_changed',`Срок: ${previousDueAt} → ${dueAt}. Причина: ${reason}`);
         this.store.notify(info.item,info.person,'deadline_changed');
       }
