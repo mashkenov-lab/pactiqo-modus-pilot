@@ -8,6 +8,7 @@ async function openCompany() {
   const people = Object.values(company.people);
   modal(modalHead('Компания и ответственность') + `
     <p>Контакты в справочнике не подтверждают привязку к провайдеру.</p><button type="button" id="company-channels">Каналы и почта</button>
+    <h3>Резервная копия</h3><p>Копия сохраняется в защищённой папке приложения и содержит данные компании. Учётные записи и подключения могут зависеть от этого компьютера.</p><button type="button" id="company-backup">Создать копию</button><p id="company-backup-result"></p>
     <h3>Сотрудники</h3><div class="table-wrap"><table><thead><tr><th>Имя</th><th>Роль и подразделение</th><th>Статус</th><th>Действия</th></tr></thead><tbody>
     ${people.map(p=>`<tr><td>${esc(p.name)}<small class="subline">${esc(p.id)}</small></td><td>${esc(p.admin?'Администратор':p.role)} · ${esc(p.department)}</td><td>${p.active?'Активен':'Отключён'} · провайдер не подтверждён справочником</td><td><button type="button" data-edit-person="${esc(p.id)}">Изменить</button> <button type="button" data-issue-person="${esc(p.id)}">Выдать пароль</button></td></tr>`).join('')}
     </tbody></table></div>
@@ -23,6 +24,7 @@ async function openCompany() {
   const view={epoch:uiEpoch,actorId:opening.actorId};
   const call=(path,body)=>companyRequest(view,path,body);
   $('#company-channels').onclick=()=>openCompanyChannels(company).catch(err=>toast(err.message));
+  $('#company-backup').onclick=async e=>{const button=e.currentTarget;button.disabled=true;try{const result=await call('/company/backup',{});$('#company-backup-result').textContent='Создана копия '+result.name+' · файлов: '+result.files+'. Храните её в защищённом месте.';}catch(err){if(currentView(view))$('#company-backup-result').textContent=err.message;}finally{if(button.isConnected)button.disabled=false;}};
   let preview=null, original=null;
   $('#company-file').onchange=async e=>{const file=e.target.files[0];if(file){const text=await file.text();if(!currentView(view))return;$('#company-text').value=text;$('#company-format').value=file.name.toLowerCase().endsWith('.json')?'json':'csv';preview=null;$('#company-apply').disabled=true;}};
   $('#company-text').oninput=()=>{preview=null;$('#company-apply').disabled=true;};
