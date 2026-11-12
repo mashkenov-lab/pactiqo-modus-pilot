@@ -13,7 +13,7 @@ test('submitted advice contract matches validator and final bounded document IDs
   const job = {requestId:'contract-test'};
   const context = {case:{id:'case-1', number:'MT-0022', phase:'new', description:'Не зарегистрировано'}, messages:[{body:'Что делать?'}], documents:[{id:'doc-kept',body:'a'}, {id:'doc-trimmed',body:''}]};
   const {casePrompt} = require('../case-assistant.cjs');
-  for (let n=22000;n<24000;n++) {
+  for (let n=16000;n<24000;n++) {
     context.documents[1].body='x'.repeat(n);
     const candidate=casePrompt(context);
     if (candidate.context.documents.length===2 && JSON.stringify(candidate).length>23900) break;
@@ -65,4 +65,23 @@ test('submission without documents permits only an empty source list', async()=>
   link.client.result=async()=>({state:'answered',reply:JSON.stringify(value)});
   assert.deepEqual(await link.caseAnalysis.analyze({requestId:'empty-docs'},{messages:[{body:'Вопрос'}],documents:[]}),value);
   assert.deepEqual(submitted.schema.properties.sourceRefs.items.enum,[]);
+});
+
+
+test('shared advice prompt keeps current state and exact sources while separating concise reply from detailed proposal',()=>{
+ const {casePrompt}=require('../case-assistant.cjs');
+ const context={case:{id:'case-current',number:'MT-0022',phase:'in_progress',description:'Ещё не зарегистрировано'},progress:{body:'Замер сделан',nextStep:'Проверить проход',revision:2},plan:{body:'Согласованный план'},messages:[{body:'Карточки пока нет'},{body:'А дальше?'}],documents:[{id:'exact-source',body:'Утверждённые обязанности'}]};
+ const before=structuredClone(context),p=casePrompt(context);
+ assert.deepEqual(p.context,before);
+ assert.match(p.instruction,/reply.*до 1200/);
+ assert.match(p.instruction,/не более двух вопросов/);
+ assert.match(p.instruction,/proposedPlan.*подробн/);
+ assert.match(p.instruction,/progress.*plan/);
+ assert.match(p.instruction,/коды фаз.*ISO/);
+ assert.match(p.instruction,/ИИ/);
+ assert.match(p.instruction,/case\.phase/);
+ const value={reply:'Карточка уже есть, замер сохранён. Следующий шаг — проверить проход.',questions:[],proposedPlan:'Подробное предложение для проверки человеком',sourceRefs:['exact-source'],uncertainty:''};
+ assert.deepEqual(validateCaseAdvice(value,p.context),value);
+ assert.throws(()=>validateCaseAdvice({...value,sourceRefs:['exact-source с пояснением']},p.context));
+ assert.deepEqual(context,before);
 });

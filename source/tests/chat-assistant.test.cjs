@@ -6,3 +6,24 @@ const e=people.employee;
 test('Assistant speaks naturally on every turn, including when the card is ready',t=>{const s=env(t),c=s.openConversation(e,{key:'natural',kind:'employee',body:'На складе всё время мешают коробки в проходе.'}),p=s.beginAnalysis(e,c.id,{revision:1,engine:'adapter'});const r={title:'Свободный проход',summary:'Освободить проход на складе.',intent:'problem',category:'Безопасность',department:'Склад',suggestedSolution:null,quotes:[{messageId:c.messages[0].id,text:c.messages[0].text}],missing:[],uncertainty:'',reply:'Понял: нужно освободить проход на складе. Я подготовил обращение, проверьте описание и подтвердите направление.'};validate(r,c,{categories:s.categories(),departments:['Склад']});const done=s.finishAnalysis(e,c.id,p.analysisRequestId,r);assert.equal(done.messages.at(-1).role,'assistant');assert.equal(done.messages.at(-1).text,r.reply);assert.equal(done.entity,null);assert.equal(new SuiteStore(s.dir).conversation(e,c.id).messages.at(-1).text,r.reply);});
 test('Conversation continues after registration and receives real card context without creating another card',t=>{const s=env(t),c=s.openConversation(e,{key:'after',kind:'employee',body:'Нужен свободный проход.'}),registered=s.confirmConversation(e,c.id,{revision:1,title:'Проход',description:'Освободить проход',category:'Безопасность',department:'Склад'}),count=Object.keys(s.state.modus.cases).length;const next=s.addMessage(e,c.id,{revision:registered.revision,key:'question',body:'Что будет дальше и кто отвечает?'}),pending=s.beginAnalysis(e,c.id,{revision:next.revision,engine:'adapter'});assert.equal(typeof s.analysisContext,'function');const context=s.analysisContext(e,c.id);assert.equal(context.registeredEntity.number,registered.entity.number);assert.equal(context.registeredEntity.phase,'new');assert(context.registeredEntity.owner);s.finishAnalysis(e,c.id,pending.analysisRequestId,{reply:'Обращение зарегистрировано. Ответственный рассмотрит его и вернёт результат на вашу проверку.',summary:'Ответ о процессе',missing:[]});assert.equal(Object.keys(s.state.modus.cases).length,count);assert.equal(s.conversation(e,c.id).entity.id,registered.entity.id);});
 test('AI route preview reflects actual fallback assignment and never guesses an unknown category',t=>{const s=env(t),c=s.openConversation(e,{key:'route',kind:'employee',body:'Переставить коробки.'});assert.equal(typeof s.conversationView,'function');s.suite.conversations[c.id].analysis={category:'Безопасность',department:'Склад'};s.platform.availability.owner=false;assert.equal(s.conversationView(e,c.id).routePreview.ownerId,'owner2');s.suite.conversations[c.id].analysis.category=null;assert.equal(s.conversationView(e,c.id).routePreview,null);assert.throws(()=>s.conversationView(people.employee2,c.id),{status:404});});
+
+
+test('prompt separates business summary from authoritative saved state without rewriting history',t=>{
+ const s=env(t),c=s.openConversation(e,{key:'historic-state',kind:'employee',body:'Нужен свободный проход. Обращение ещё не зарегистрировано.'});
+ const registered=s.confirmConversation(e,c.id,{revision:1,title:'Проход',description:'Освободить проход',category:'Безопасность',department:'Склад'});
+ const next=s.addMessage(e,c.id,{revision:registered.revision,key:'terse',body:'А дальше?'});
+ const conversation=s.conversation(e,c.id),context=s.analysisContext(e,c.id),before=structuredClone({conversation,context});
+ const input=require('../desk-analyzer.cjs').prompt(conversation,context),payload=JSON.parse(input.slice(input.indexOf('\n')+1)),instruction=input.slice(0,input.indexOf('\n'));
+ assert.deepEqual(payload.messages,conversation.messages.map(({id,role,text})=>({id,role,text})));
+ assert.deepEqual(payload.registeredEntity,context.registeredEntity);
+ assert.equal(payload.messages[0].text,c.messages[0].text);
+ assert.match(instruction,/registeredEntity.*приоритет/);
+ assert.match(instruction,/summary.*только.*делов/);
+ assert.match(instruction,/не включай.*регистрац/);
+ assert.match(instruction,/registeredEntity === null/);
+ assert.match(instruction,/не более двух вопросов/);
+ assert.match(instruction,/коды фаз.*ISO/);
+ assert.match(instruction,/ИИ/);
+ assert.deepEqual({conversation,context},before);
+ assert.equal(s.conversation(e,c.id).messages[0].text,c.messages[0].text);
+});
