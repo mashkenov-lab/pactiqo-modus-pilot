@@ -1,0 +1,96 @@
+'use strict';
+const {createHash,randomUUID} = require('node:crypto');
+const {payloadHash} = require('./vendor/adapter-platform/grant-hash.cjs');
+const terminal = new Set(['sent','delivered','read','failed','failed-before-send','cancelled','unsupported']);
+class CaseDelivery {
+  constructor({store,workroom,transport,authority,links,cardLinkFor,now=Date.now}){
+    Object.assign(this,{store,workroom,transport,authority,links,cardLinkFor,now});this.busy=false;this.timer=null;
+    if(!store.suite.caseDelivery)store.atomic(()=>{store.suite.caseDelivery={cursors:Object.fromEntries(Object.entries(store.suite.caseWorkspaces||{}).map(([id,r])=>[id,r.events.length])),outbox:{},notificationSeen:Object.fromEntries(store.platform.notifications.map(n=>[n.id,true]))};});
+    if(!store.suite.caseDelivery.notificationSeen)store.atomic(()=>{store.suite.caseDelivery.notificationSeen=Object.fromEntries(store.platform.notifications.map(n=>[n.id,true]));});
+    store.atomic(()=>{for(const row of Object.values(this.state.outbox))if(row.state==='sending')row.state='unknown';});
+  }
+  get state(){return this.store.suite.caseDelivery;}
+  id(eventId,recipient,bindingId){return createHash('sha256').update(JSON.stringify([eventId,recipient,bindingId])).digest('hex');}
+  current(row){
+    const person=this.store.person(row.recipientId),item=this.store.get(row.caseId,person);
+    if(![item.authorId,item.ownerId].includes(person.id))throw Error('Получатель больше не участник');
+    if(row.creatorId)this.store.get(row.caseId,this.store.person(row.creatorId));
+    const event=row.eventSource==='assignment'?this.store.platform.notifications.find(n=>n.id===row.eventId&&n.action==='assigned'&&n.recipient===row.recipientId):this.store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
+    if(!event || (row.eventSource==='assignment'?event.title:event.body)!==row.eventBody || (row.eventSource==='assignment'&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
+    return {person,item,event};
+  }
+  collect(status){
+    const bindings=status.bindings||[];
+    for(const [caseId,room] of Object.entries(this.store.suite.caseWorkspaces||{})){
+      const start=this.state.cursors[caseId]||0;
+      for(const event of room.events.slice(start)){
+        if(!['shared_message','assistant_reply','plan_updated'].includes(event.type))continue;
+        const item=this.store.state.modus.cases[caseId];if(!item)continue;
+        for(const recipientId of new Set([item.authorId,item.ownerId].filter(Boolean))){
+          if(recipientId===event.creatorId)continue;
+          let person;try{person=this.store.person(recipientId);this.store.get(caseId,person);}catch{continue;}
+          const available=bindings.filter(b=>b.enabled&&b.employeeId===recipientId);
+          const chosen=available.find(b=>b.channelId===person.preferredChannel)||available[0];
+          if(!chosen){const operationId=this.id(event.id,recipientId,'unbound');this.store.atomic(()=>{this.state.outbox[operationId]||={operationId,caseId,eventId:event.id,recipientId,state:'unsupported',reason:'no_verified_binding'};});continue;}
+          const operationId=this.id(event.id,recipientId,chosen.bindingId);
+          if(this.state.outbox[operationId])continue;
+          const label=event.type==='shared_message'?'Новое сообщение':event.type==='plan_updated'?'Обновлён план':'Ответ помощника';
+          const url=this.cardLinkFor?.(caseId,recipientId);
+          if(url && (typeof url!=='string'||url.length>1000))throw Error('Некорректная ссылка карточки');
+          const suffix=url?'\n'+url:'';const text=(label+' · '+item.number+'\n'+event.body).slice(0,4000-suffix.length)+suffix;
+          const payload={caseId,bindingId:chosen.bindingId,operationId,kind:'result',text};
+          this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId,eventId:event.id,eventBody:event.body,creatorId:event.creatorId,recipientId,bindingId:chosen.bindingId,channelId:chosen.channelId,fallback:chosen.channelId!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:chosen.channelId==='owner-modus'?'unsupported':'queued',reason:chosen.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+        }
+      }
+      this.store.atomic(()=>{this.state.cursors[caseId]=room.events.length;});
+    }
+  }
+  collectAssignments(status){
+    const all=this.store.platform.notifications;
+    for(const note of all.filter(n=>!this.state.notificationSeen[n.id])){
+      if(note.action!=='assigned')continue;
+      let person,item;try{person=this.store.person(note.recipient);item=this.store.get(note.caseId,person);}catch{continue;}
+      if(item.ownerId!==person.id)continue;
+      const choices=(status.bindings||[]).filter(b=>b.enabled&&b.employeeId===person.id);
+      const binding=choices.find(b=>b.channelId===person.preferredChannel)||choices[0];if(!binding)continue;
+      const operationId=this.id(note.id,person.id,binding.bindingId);
+      if(this.state.outbox[operationId])continue;
+      const url=this.cardLinkFor?.(note.caseId,person.id);
+      const text=('Вам назначено обращение '+item.number+' · '+note.title+(url?'\n'+url:'')).slice(0,4000);
+      const payload={caseId:note.caseId,bindingId:binding.bindingId,operationId,kind:'assignment',text};
+      this.store.atomic(()=>{this.state.outbox[operationId]={operationId,caseId:note.caseId,eventId:note.id,eventSource:'assignment',eventBody:note.title,creatorId:null,recipientId:person.id,bindingId:binding.bindingId,channelId:binding.channelId,fallback:binding.channelId!==person.preferredChannel,payload,payloadHash:payloadHash(payload),state:binding.channelId==='owner-modus'?'unsupported':'queued',reason:binding.channelId==='owner-modus'?'owner_one_final_reply_per_event':null};});
+    }
+    this.store.atomic(()=>{this.state.notificationSeen=Object.fromEntries(this.store.platform.notifications.map(n=>[n.id,true]));});
+  }
+  async tick(){
+    if(this.busy)return;this.busy=true;
+    try{
+      const status=await this.transport.status();this.authority.updateBindings(status);this.collect(status);this.collectAssignments(status);
+      for(const copy of Object.values(this.state.outbox)){
+        if(terminal.has(copy.state))continue;
+        const id=copy.operationId;
+        if(copy.state==='unknown'||copy.state==='accepted'){
+          try{const r=await this.transport.receipt({operationId:id});if(r.operationId===id)this.store.atomic(()=>{const row=this.state.outbox[id];if(row)row.state=r.state;});}catch{}continue;
+        }
+        try{
+          this.current(copy);
+          const binding=status.bindings.find(b=>b.bindingId===copy.bindingId&&b.enabled&&b.employeeId===copy.recipientId);
+          if(!binding)throw Error('Привязка отключена');
+          if(!status.capabilities?.caseNotify?.enabled)continue;
+          await this.links.ensure(copy.caseId,binding,copy.recipientId);
+          const row=this.state.outbox[id];if(!row||row.state!=='queued')continue;
+          const {person}=this.current(row);
+          const grant=this.authority.issue(person,{action:'notify',payload:row.payload,caseId:row.caseId,bindingId:row.bindingId,purpose:'persisted-case-event'});
+          this.store.atomic(()=>{const fresh=this.state.outbox[id];if(fresh?.state==='queued')fresh.state='sending';});
+          const receipt=await this.transport.notify({...row.payload,grantId:grant.grantId});
+          if(receipt.operationId!==id)throw Error('Квитанция не соответствует операции');
+          this.store.atomic(()=>{const fresh=this.state.outbox[id];if(fresh?.state==='sending')fresh.state=receipt.state;});
+        }catch(error){this.store.atomic(()=>{const row=this.state.outbox[id];if(row) {row.state=row.state==='sending'?'unknown':'cancelled';row.reason=String(error.message).slice(0,200);}});}
+      }
+    }finally{this.busy=false;}
+  }
+  snapshot(actor){const p=this.store.person(actor?.id);return Object.values(this.state.outbox).filter(o=>p.admin||o.recipientId===p.id).map(o=>structuredClone(o));}
+  start(){if(!this.timer){this.timer=setInterval(()=>this.tick().catch(()=>{}),2500);this.timer.unref?.();}}
+  stop(){clearInterval(this.timer);this.timer=null;}
+}
+module.exports={CaseDelivery};
