@@ -18,7 +18,7 @@ class CommunicationsStore extends FeedbackStore {
   if(a.role==='employee'&&kind!=='employee')fail('Клиентский вход доступен ответственной роли',403);
   if(a.role==='owner'&&kind==='employee')fail('Тестовое сообщение сотрудника создаёт сотрудник или руководитель',403);
   const senderId=kind==='employee'?(a.role==='employee'?a.id:'employee'):null;
-  const senderName=senderId?people[senderId].name:text(input.senderName,'Контакт',120);
+  const senderName=senderId?this.people[senderId].name:text(input.senderName,'Контакт',120);
   const normalized={body,senderId,senderName,source:'WhatsApp · учебный вход'};
   const hash=createHash('sha256').update(JSON.stringify(normalized)).digest('hex'),key=a.id+':'+eventId,known=this.comm.events[key];
   if(known){if(known.hash!==hash)fail('ID события уже использован с другим содержимым',409);return {...structuredClone(this.message(known.id,a)),duplicate:true};}
@@ -28,7 +28,7 @@ class CommunicationsStore extends FeedbackStore {
   if(type==='case'){
    if(!msg.senderId)fail('Для обращения сотрудника нужна подтверждённая связь с сотрудником');
    if(a.id!==msg.senderId&&a.role!=='manager')fail('Маршрут подтверждает автор или руководитель',403);
-   return this.atomic(()=>{const c=this.create(people[msg.senderId],{title,description:msg.body,department:input.department,category:input.category,key:'inbox-'+msg.id});const stored=this.state.modus.cases[c.taskId];stored.source=msg.source;stored.messageId=msg.id;this.history(stored,a,'routed','Исходное сообщение связано с обращением. Учебный вход подтверждён человеком.');msg.entityId=c.taskId;msg.entityType='case';msg.status='routed';msg.revision++;return this.row(stored);});
+   return this.atomic(()=>{const c=this.create(this.actor(msg.senderId),{title,description:msg.body,department:input.department,category:input.category,key:'inbox-'+msg.id});const stored=this.state.modus.cases[c.taskId];stored.source=msg.source;stored.messageId=msg.id;this.history(stored,a,'routed','Исходное сообщение связано с обращением. Учебный вход подтверждён человеком.');msg.entityId=c.taskId;msg.entityType='case';msg.status='routed';msg.revision++;return this.row(stored);});
   }
   if(type!=='lead')fail('Выберите обращение или лид');if(a.role==='employee'||msg.senderId)fail('Клиентский лид создаётся из клиентского запроса ответственной ролью',403);
   const nextStep=text(input.nextStep,'Следующий шаг',500),dueAt=date(input.dueAt);
