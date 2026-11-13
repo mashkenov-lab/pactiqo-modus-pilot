@@ -1,0 +1,36 @@
+{
+  "checkedAt": "2026-11-13T06:38:51.899283+00:00",
+  "cleanCloneCommit": "494ded29082d92b19232d4b726ddaa20a310d5f6",
+  "installDependenciesRequired": false,
+  "checks": [
+    {
+      "command": "node scripts/verify-source.cjs",
+      "exitCode": 0,
+      "seconds": 0.11
+    },
+    {
+      "command": "node scripts/selfcheck.cjs",
+      "exitCode": 0,
+      "seconds": 3.43
+    },
+    {
+      "command": "node scripts/test-core.cjs",
+      "exitCode": 0,
+      "seconds": 12.4
+    }
+  ],
+  "cliLaunch": {
+    "health": true,
+    "login": true,
+    "cases": 20,
+    "portEphemeral": true,
+    "externalProvidersEnabled": false
+  },
+  "browser": {
+    "command": "node --test source/tests/discussion-files-browser.test.cjs",
+    "dependency": "existing Playwright and installed Chrome; separate from npm test",
+    "exitCode": 0,
+    "seconds": 12.84
+  },
+  "gitWorktreeClean": true
+}
