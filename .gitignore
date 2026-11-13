@@ -4,6 +4,8 @@
 node_modules/
 .env
 .env.*
+.vercel/
+*.local.*
 ACCESS.txt
 accounts.json
 workspace.json

@@ -8,6 +8,7 @@
     "start": "node scripts/start-demo.cjs",
     "test": "node scripts/test-core.cjs",
     "selfcheck": "node scripts/selfcheck.cjs",
-    "verify:source": "node scripts/verify-source.cjs"
+    "verify:source": "node scripts/verify-source.cjs",
+    "verify:cloud": "node scripts/verify-cloud.cjs"
   }
 }

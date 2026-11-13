@@ -1,0 +1,1 @@
+{"version":2,"framework":null,"buildCommand":"","outputDirectory":"static","functions":{"api/index.mjs":{"includeFiles":"core/**","maxDuration":60}},"rewrites":[{"source":"/(.*)","destination":"/api/index"}]}

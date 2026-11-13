@@ -1,0 +1,39 @@
+{
+  "checkedAt": "2026-11-13T08:04:12.205410+00:00",
+  "scope": "anonymous final-domain GET metadata; browser behavior independently reviewed",
+  "portalDeployment": "dpl_3JB4AhtRtMrngRkbNd2KLziwcVUk",
+  "urls": [
+    {
+      "url": "https://pactiqo.com/modus/",
+      "method": "GET",
+      "status": 200,
+      "resolvedUrl": "https://pactiqo.com/modus/",
+      "contentType": "text/html; charset=utf-8",
+      "contentLength": "8803"
+    },
+    {
+      "url": "https://pactiqo.com/modus/app/",
+      "method": "GET",
+      "status": 200,
+      "resolvedUrl": "https://pactiqo.com/modus/app/",
+      "contentType": "text/html; charset=utf-8",
+      "contentLength": null
+    },
+    {
+      "url": "https://pactiqo.com/modus/tour/",
+      "method": "GET",
+      "status": 200,
+      "resolvedUrl": "https://pactiqo.com/modus/tour/",
+      "contentType": "text/html; charset=utf-8",
+      "contentLength": "2053"
+    },
+    {
+      "url": "https://pactiqo.com/modus/modus-pilot.mp4",
+      "method": "GET",
+      "status": 200,
+      "resolvedUrl": "https://pactiqo.com/modus/modus-pilot.mp4",
+      "contentType": "video/mp4",
+      "contentLength": "22570356"
+    }
+  ]
+}

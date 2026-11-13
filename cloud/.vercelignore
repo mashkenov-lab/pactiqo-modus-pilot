@@ -1,0 +1,10 @@
+node_modules
+.env*
+test
+evidence
+*.local.*
+local.mjs
+README.md
+core/public/styles.css
+core/public/app.js
+core/public/index.html

@@ -1,0 +1,15 @@
+{
+  "checkedAt": "2026-11-13T08:27:59.716Z",
+  "blob": "2.8.2",
+  "cliConfig": "0.3.6",
+  "installedZod": "4.6.6",
+  "embeddedZod": "4.6.7",
+  "auditVulnerabilities": 0,
+  "tests": {
+    "pass": 7,
+    "fail": 0
+  },
+  "advisory": "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+  "deployment": "dpl_E7kHGCYb9eMVSb2Hu6ue3GcEC4ha",
+  "scope": "Official patch package and explicit transitive override. Embedded bundle version independently inspected, not only lockfile audit."
+}

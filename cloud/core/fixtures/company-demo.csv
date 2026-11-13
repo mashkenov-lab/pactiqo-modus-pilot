@@ -1,0 +1,4 @@
+id,name,department,position,managerId,role,phone,email,preferredChannel,active
+demo_manager,Вера — учебный руководитель,Учебный склад,Руководитель,,manager,,vera@example.invalid,web,true
+demo_owner,Борис — учебный ответственный,Учебный склад,Начальник участка,demo_manager,owner,,boris@example.invalid,telegram,true
+demo_employee,Анна — учебный сотрудник,Учебный склад,Оператор,demo_owner,employee,,anna@example.invalid,whatsapp,true

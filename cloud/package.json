@@ -1,0 +1,22 @@
+{
+  "name": "pactiqo-modus-pilot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
+  "scripts": {
+    "start": "node local.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@vercel/blob": "2.8.2"
+  },
+  "overrides": {
+    "@vercel/cli-config": {
+      ".": "0.3.6",
+      "zod": "4.6.6"
+    }
+  }
+}

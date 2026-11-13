@@ -1,3 +1,8 @@
 * -text
 *.md text eol=lf
 /source/** -text
+/cloud/** -text
+/demonstration/** -text
+/presentation/*.txt -text
+/presentation/*.srt -text
+/presentation/*.vtt -text

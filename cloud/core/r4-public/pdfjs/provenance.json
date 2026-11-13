@@ -1,0 +1,19 @@
+{
+  "version": "5.6.205",
+  "license": "Apache-2.0",
+  "source": "https://github.com/mozilla/pdf.js",
+  "files": [
+    {
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "name": "LICENSE"
+    },
+    {
+      "sha256": "43c67d941a73a2d65be72c97f5e68d9a7963df53b219cc1c0aa85f2b8bd1c9bd",
+      "name": "pdf.mjs"
+    },
+    {
+      "sha256": "08ee175af31a8537ee0ddee910717db78c6751e2016c4ddc3f033d5047ed5aa0",
+      "name": "pdf.worker.mjs"
+    }
+  ]
+}
