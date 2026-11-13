@@ -2,6 +2,7 @@
 
 const {randomUUID, createHash} = require('node:crypto');
 const {casePrompt, validateCaseAdvice, formatAdvice} = require('./case-assistant.cjs');
+const {prepareFiles,writeFiles,cleanupFiles}=require('./case-files.cjs');
 const activeStores = new WeakSet();
 const clone = value => structuredClone(value);
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -38,13 +39,14 @@ function fingerprint(store, info, room) {
 function buildCaseContext(store, actor, caseId, room) {
   const {person, item, task} = caseInfo(store, actor, caseId);
   const docs = store.responsibilityContext(person,item.department);
-  const history = room.messages.slice(-20).map(m => ({role:m.role,body:m.body,authorId:m.authorId,createdAt:m.createdAt}));
+  const history = room.messages.slice(-20).map(m => ({role:m.role,body:m.body,authorId:m.authorId,createdAt:m.createdAt,attachments:(m.attachments||[]).map(f=>({id:f.id,name:f.name,mime:f.mime})),reviewOf:m.reviewOf||null,fileDecision:m.fileDecision||null,demo:!!m.demo}));
   return {
     case:{id:caseId,number:item.number,title:task.title,description:item.description,department:item.department,category:item.category,phase:item.phase,ownerId:item.ownerId,authorId:item.authorId,result:clone(item.resolution),dueAt:task.dueAt},
     actor:{id:person.id,role:person.role}, participants:members(store,item),
     route:{routing:clone(item.routing || null),availability:item.ownerId ? store.platform.availability[item.ownerId] !== false : false},
     plan:clone(room.plan), progress:store.caseProgress(person,caseId), messages:history, historyPartial:room.messages.length>history.length,
-    documents:clone(docs.documents), contextPartial:!!docs.truncated, documentNotice:docs.notice
+    documents:clone(docs.documents), contextPartial:!!docs.truncated, documentNotice:docs.notice,
+    attachmentNotice:'Вложения переданы только как имена и типы. Содержимое бинарных файлов не прочитано. Не утверждайте, что просмотрели изображение или документ. Согласование файла человеком не закрывает обращение. Сообщения demo — учебный сценарий, не факты реального внедрения.'
   };
 }
 class CaseWorkspace {
@@ -65,20 +67,29 @@ class CaseWorkspace {
   }
   post(actor, input, trusted = {}) {
     const info=caseInfo(this.store,actor,input.caseId), room=this.room(input.caseId);
-    const body=clean(input.body,4000), key=clean(input.key,120), k=info.person.id+':'+key;
+    const files=prepareFiles(input.attachments),body=files.length&&!input.body?.trim()?'':clean(input.body,4000), key=clean(input.key,120), k=info.person.id+':'+key;
+    const reviewOf=input.reviewOf||null,fileDecision=input.fileDecision||null;
+    if(reviewOf){const file=this.store.platform.attachments[reviewOf];if(!file||file.caseId!==input.caseId||!file.messageId||!room.messages.some(m=>m.id===file.messageId&&(m.attachments||[]).some(f=>f.id===reviewOf)))fail('Материал недоступен в этом обсуждении',404);if(!['approved','changes'].includes(fileDecision))fail('Выберите результат проверки материала');}
+    else if(fileDecision)fail('Выберите материал для проверки');
+    const contentHash=hash({body,reviewOf,fileDecision,files:files.map(({name,mime,size,sha256})=>({name,mime,size,sha256}))});
     const source=trusted.source || 'web';
     if (!['web','whatsapp','telegram','max','mail'].includes(source)) fail('Неизвестный канал');
     const known=room.keys[k];
-    if (known) { if (known.body !== body || known.source !== source) fail('Ключ уже использован',409); return clone(room.messages.find(m=>m.id===known.id)); }
+    if (known) { if (known.body !== body || known.source !== source || (known.contentHash?known.contentHash!==contentHash:files.length||reviewOf||fileDecision)) fail('Ключ уже использован',409); return clone(room.messages.find(m=>m.id===known.id)); }
     this.check(room,input.expectedRevision);
     if (room.messages.length>=5000) fail('Достигнут предел сообщений',409);
-    return this.store.atomic(()=>{
+    if(room.messages.reduce((n,m)=>n+(m.attachments||[]).length,0)+files.length>100)fail('В обсуждении уже 100 материалов');
+    const created=[];
+    try{return this.store.atomic(()=>{
       const target=this.ensure(input.caseId), revision=++target.revision;
       const message={id:randomUUID(),caseId:input.caseId,role:'human',authorId:info.person.id,authorName:info.person.name,source,body,createdAt:this.stamp(),visibility:'case-participants',revision};
-      target.messages.push(message); target.keys[k]={id:message.id,body,source};
-      target.events.push({id:randomUUID(),type:'shared_message',caseId:input.caseId,creatorId:info.person.id,revision,body});
+      if(trusted.demo===true)message.demo=true;
+      if(files.length)message.attachments=writeFiles(this.store,input.caseId,message.id,files,message.createdAt,created);
+      if(reviewOf){message.reviewOf=reviewOf;message.fileDecision=fileDecision;}
+      target.messages.push(message); target.keys[k]={id:message.id,body,source,contentHash};
+      target.events.push({id:randomUUID(),type:'shared_message',caseId:input.caseId,creatorId:info.person.id,revision,body:body+(files.length?'\nМатериалы: '+files.map(f=>f.name).join(', '):''),...(trusted.demo===true?{demo:true}:{})});
       return clone(message);
-    });
+    });}catch(error){cleanupFiles(created);throw error;}
   }
   savePlan(actor,input) {
     const info=caseInfo(this.store,actor,input.caseId), room=this.room(input.caseId);

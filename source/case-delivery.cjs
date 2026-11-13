@@ -11,6 +11,7 @@ function currentDeliveryEvent(store,row,item,now=Date.now()){
   const notification=['assignment','notification'].includes(row.eventSource);
   const event=notification?store.platform.notifications.find(n=>n.id===row.eventId&&n.caseId===row.caseId&&n.recipient===row.recipientId):store.suite.caseWorkspaces?.[row.caseId]?.events?.find(e=>e.id===row.eventId);
   if(!event)throw Error('Событие недоступно');
+  if(event.demo)throw Error('Учебная переписка не отправляется во внешние каналы');
   if(row.eventSource==='notification'){
     if(notificationStamp(event)!==row.eventStamp||item.authorId!==event.participants?.authorId||item.ownerId!==event.participants?.ownerId)throw Error('Событие или участники изменены');
   }else if((notification?event.title:event.body)!==row.eventBody||(notification&&item.ownerId!==row.recipientId))throw Error('Событие изменено');
@@ -45,7 +46,7 @@ class CaseDelivery {
     for(const [caseId,room] of Object.entries(this.store.suite.caseWorkspaces||{})){
       const start=this.state.cursors[caseId]||0;
       for(const event of room.events.slice(start)){
-        if(!['shared_message','assistant_reply','plan_updated'].includes(event.type))continue;
+        if(event.demo||!['shared_message','assistant_reply','plan_updated'].includes(event.type))continue;
         const item=this.store.state.modus.cases[caseId];if(!item)continue;
         for(const recipientId of new Set([item.authorId,item.ownerId].filter(Boolean))){
           if(recipientId===event.creatorId)continue;
