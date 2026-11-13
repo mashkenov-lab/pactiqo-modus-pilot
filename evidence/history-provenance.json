@@ -1,0 +1,458 @@
+{
+  "upstreamHead": "ab11ca7046d6117c5754e3588afb0c747bf9d351",
+  "method": "git fast-export exact allowlist; source/ path prefix only; original authors, timestamps, messages and content preserved; commit hashes necessarily change",
+  "originalRepositoryCommits": 66,
+  "exportedCommits": 52,
+  "allowedPaths": [
+    "README_R6.md",
+    "adapter-authority.cjs",
+    "adapter-link.cjs",
+    "adapter-mail.cjs",
+    "bitrix-connector.cjs",
+    "card-links.cjs",
+    "case-assistant.cjs",
+    "case-attention.cjs",
+    "case-delivery.cjs",
+    "case-files.cjs",
+    "case-workspace.cjs",
+    "communications.cjs",
+    "company-directory.cjs",
+    "defense/R6_ARCHITECTURE.md",
+    "defense/R6_DEMO.md",
+    "defense/R6_REQUIREMENTS_AND_PLATFORM.md",
+    "desk-analyzer.cjs",
+    "discussion-demo.cjs",
+    "domain.cjs",
+    "fixtures/company-demo-responsibility.md",
+    "fixtures/company-demo.csv",
+    "fixtures/discussion-materials/A-001-example.png",
+    "fixtures/discussion-materials/A-001-v1.pdf",
+    "fixtures/discussion-materials/A-001-v2.pdf",
+    "fixtures/discussion-materials/A-002-example.png",
+    "fixtures/discussion-materials/A-002-v1.pdf",
+    "fixtures/discussion-materials/A-002-v2.pdf",
+    "fixtures/discussion-materials/A-003-example.png",
+    "fixtures/discussion-materials/A-003-v1.pdf",
+    "fixtures/discussion-materials/A-003-v2.pdf",
+    "fixtures/discussion-materials/A-004-example.png",
+    "fixtures/discussion-materials/A-004-v1.pdf",
+    "fixtures/discussion-materials/A-004-v2.pdf",
+    "fixtures/discussion-materials/A-005-example.png",
+    "fixtures/discussion-materials/A-005-v1.pdf",
+    "fixtures/discussion-materials/A-005-v2.pdf",
+    "fixtures/discussion-materials/A-006-example.png",
+    "fixtures/discussion-materials/A-006-v1.pdf",
+    "fixtures/discussion-materials/A-006-v2.pdf",
+    "fixtures/discussion-materials/A-007-example.png",
+    "fixtures/discussion-materials/A-007-v1.pdf",
+    "fixtures/discussion-materials/A-007-v2.pdf",
+    "fixtures/discussion-materials/A-008-example.png",
+    "fixtures/discussion-materials/A-008-v1.pdf",
+    "fixtures/discussion-materials/A-008-v2.pdf",
+    "fixtures/discussion-materials/A-009-example.png",
+    "fixtures/discussion-materials/A-009-v1.pdf",
+    "fixtures/discussion-materials/A-009-v2.pdf",
+    "fixtures/discussion-materials/A-010-example.png",
+    "fixtures/discussion-materials/A-010-v1.pdf",
+    "fixtures/discussion-materials/A-010-v2.pdf",
+    "fixtures/discussion-materials/A-011-example.png",
+    "fixtures/discussion-materials/A-011-v1.pdf",
+    "fixtures/discussion-materials/A-011-v2.pdf",
+    "fixtures/discussion-materials/A-012-example.png",
+    "fixtures/discussion-materials/A-012-v1.pdf",
+    "fixtures/discussion-materials/A-012-v2.pdf",
+    "fixtures/discussion-materials/A-013-example.png",
+    "fixtures/discussion-materials/A-013-v1.pdf",
+    "fixtures/discussion-materials/A-013-v2.pdf",
+    "fixtures/discussion-materials/A-014-example.png",
+    "fixtures/discussion-materials/A-014-v1.pdf",
+    "fixtures/discussion-materials/A-014-v2.pdf",
+    "fixtures/discussion-materials/A-015-example.png",
+    "fixtures/discussion-materials/A-015-v1.pdf",
+    "fixtures/discussion-materials/A-015-v2.pdf",
+    "fixtures/discussion-materials/A-016-example.png",
+    "fixtures/discussion-materials/A-016-v1.pdf",
+    "fixtures/discussion-materials/A-016-v2.pdf",
+    "fixtures/discussion-materials/A-017-example.png",
+    "fixtures/discussion-materials/A-017-v1.pdf",
+    "fixtures/discussion-materials/A-017-v2.pdf",
+    "fixtures/discussion-materials/A-018-example.png",
+    "fixtures/discussion-materials/A-018-v1.pdf",
+    "fixtures/discussion-materials/A-018-v2.pdf",
+    "fixtures/discussion-materials/A-019-example.png",
+    "fixtures/discussion-materials/A-019-v1.pdf",
+    "fixtures/discussion-materials/A-019-v2.pdf",
+    "fixtures/discussion-materials/A-020-example.png",
+    "fixtures/discussion-materials/A-020-v1.pdf",
+    "fixtures/discussion-materials/A-020-v2.pdf",
+    "fixtures/discussion-materials/manifest.json",
+    "fixtures/discussion-scenarios.json",
+    "fixtures/modus-dataset.json",
+    "install-suite.cjs",
+    "installer/Launcher.cs",
+    "installer/Setup.cs",
+    "messenger-workflow.cjs",
+    "owned-adapter.cjs",
+    "owned-telegram.cjs",
+    "package.json",
+    "platform-auth.cjs",
+    "platform-server.cjs",
+    "platform-store.cjs",
+    "public/app.js",
+    "public/communications.css",
+    "public/communications.js",
+    "public/demo-desk.json",
+    "public/index.html",
+    "public/styles.css",
+    "r4-public/app.js",
+    "r4-public/chat-ui.js",
+    "r4-public/company-ui.js",
+    "r4-public/files-ui.js",
+    "r4-public/index.html",
+    "r4-public/messenger-ui.js",
+    "r4-public/pdfjs/LICENSE",
+    "r4-public/pdfjs/pdf.mjs",
+    "r4-public/pdfjs/pdf.worker.mjs",
+    "r4-public/pdfjs/provenance.json",
+    "r4-public/styles.css",
+    "r4-public/suite.js",
+    "r4-public/workroom-ui.js",
+    "scripts/bridge-artifact.cjs",
+    "scripts/build-suite.cjs",
+    "scripts/fetch-codex.cjs",
+    "scripts/generate-discussion-materials.py",
+    "scripts/package-installer.cjs",
+    "server.cjs",
+    "suite-backup.cjs",
+    "suite-control.cjs",
+    "suite-store.cjs",
+    "tests/adapter-authority.test.cjs",
+    "tests/adapter-link.test.cjs",
+    "tests/adapter-mail.test.cjs",
+    "tests/attached-adapter.test.cjs",
+    "tests/attention-http.test.cjs",
+    "tests/attentive-async.test.cjs",
+    "tests/bitrix.test.cjs",
+    "tests/browser-attention.cjs",
+    "tests/browser-chat.cjs",
+    "tests/browser-company-races.test.cjs",
+    "tests/browser-company.cjs",
+    "tests/browser-mail.cjs",
+    "tests/browser-messenger.cjs",
+    "tests/browser-r4.cjs",
+    "tests/browser-r5.cjs",
+    "tests/browser-tz-mvp.cjs",
+    "tests/card-links.test.cjs",
+    "tests/case-advice-contract.test.cjs",
+    "tests/case-attention.test.cjs",
+    "tests/case-workspace.test.cjs",
+    "tests/channel-routing.test.cjs",
+    "tests/chat-assistant.test.cjs",
+    "tests/communications.test.cjs",
+    "tests/company-directory.test.cjs",
+    "tests/company-http.test.cjs",
+    "tests/design-final.test.cjs",
+    "tests/discussion-files-browser.test.cjs",
+    "tests/discussion-files.test.cjs",
+    "tests/final-source-regressions.test.cjs",
+    "tests/installer.test.cjs",
+    "tests/messenger-http.test.cjs",
+    "tests/messenger.test.cjs",
+    "tests/platform.test.cjs",
+    "tests/r6-autostart.test.cjs",
+    "tests/r6-backup-browser.test.cjs",
+    "tests/r6-backup.test.cjs",
+    "tests/r6-bridge-artifact.test.cjs",
+    "tests/r6-control.test.cjs",
+    "tests/r6-mail151-browser.test.cjs",
+    "tests/r6-mail151-http.test.cjs",
+    "tests/r6-mail151.test.cjs",
+    "tests/r6-onboarding.test.cjs",
+    "tests/r6-owned-adapter.test.cjs",
+    "tests/r6-setup-longpath.test.cjs",
+    "tests/r6-telegram-lifecycle.test.cjs",
+    "tests/r6-telegram-real.test.cjs",
+    "tests/r6-test-temp.cjs",
+    "tests/review-regressions.test.cjs",
+    "tests/suite.test.cjs",
+    "tests/workflow.test.cjs",
+    "vendor/adapter-platform/MESSAGING_SETUP.md",
+    "vendor/adapter-platform/README.md",
+    "vendor/adapter-platform/client.cjs",
+    "vendor/adapter-platform/grant-hash.cjs",
+    "vendor/adapter-platform/manifest.json",
+    "vendor/adapter-platform/messaging-v2.cjs",
+    "vendor/adapter-platform/messaging.cjs",
+    "vendor/adapter/policy.cjs",
+    "vendor/adapter/workflow.cjs",
+    "vendor/desk/codex.cjs",
+    "vendor/desk/deadline-zone.cjs",
+    "vendor/desk/onboarding.cjs",
+    "vendor/desk/persistence.cjs",
+    "vendor/desk/store.cjs",
+    "vendor/desk/task-notifications.cjs",
+    "vendor/desk/voice-import.cjs"
+  ],
+  "commits": [
+    {
+      "originalCommit": "88fac62783be4e8d21626adfc9ba80936f91a5e1",
+      "message": "Build local Modus feedback MVP R4 with source dataset and acceptance evidence",
+      "exportedCommit": "281eda5201a60d88a2a7710da97fc3dec478688d"
+    },
+    {
+      "originalCommit": "3d54cd93e0197828681a30bc1f173739fd920e57",
+      "message": "Build MODUS R5 workflows and isolated three-component Windows suite",
+      "exportedCommit": "2e401c3f71297508c34830d547f9402995418e91"
+    },
+    {
+      "originalCommit": "b0e4f57e7ac8adc1b957c04770bb99cdeb39558d",
+      "message": "Fix reviewed integration races, recovery and employee mail replies",
+      "exportedCommit": "96a3ed6f0859284e36f49aa0ee0408f0e7979f05"
+    },
+    {
+      "originalCommit": "1025cd1c734af857f50429795d81b0e2c8d54cb6",
+      "message": "Complete natural-language AI chat through Adapter with persistent follow-up",
+      "exportedCommit": "4594a1024c49cfe37291c2c570887d7d91f3e66f"
+    },
+    {
+      "originalCommit": "bdc0c5b79c18662a1e4d41f866110d6e4b3db07d",
+      "message": "Connect confirmed employee messenger conversations to MODUS cases",
+      "exportedCommit": "ad5959096d82aaac83b0aaa5b0777c54186d02a2"
+    },
+    {
+      "originalCommit": "ca28bf39618f380de372ec3b11237f846698bbb2",
+      "message": "Add workspace company directory and dynamic identities",
+      "exportedCommit": "476e6fcf3f21a158c4457642ba35956bc923b25f"
+    },
+    {
+      "originalCommit": "7993e84a8033088d3f8069b002d505ca687ad732",
+      "message": "Enforce current notification access and eligible lead routing",
+      "exportedCommit": "ce728491a3b756b0c626aea845d447ca75e17ec0"
+    },
+    {
+      "originalCommit": "103648fa576a38a8e2d0c656b77d51c4b4d83a0d",
+      "message": "Allow managers to assign customer leads",
+      "exportedCommit": "7cd333e95bfd4f2bc5b652cd6dd9a3226388138c"
+    },
+    {
+      "originalCommit": "6cc53d3f5c6319b37b0e884137ca4398eb69fc8c",
+      "message": "Add shared case workspaces and advisory jobs",
+      "exportedCommit": "8cae4cae5e105ea9d4898bf2d88810a32f387e65"
+    },
+    {
+      "originalCommit": "2684085f16ce8649ea7aefa606bf1f7574d1d0b9",
+      "message": "Fairly process and atomically settle case advice",
+      "exportedCommit": "e705ea0b02844dd0a7eb2b83cb52eca6d45fdfab"
+    },
+    {
+      "originalCommit": "6f1cfab33e65986e01a9acaef9b0ccfbedcc4694",
+      "message": "Implement company channel authority and case delivery",
+      "exportedCommit": "f80f53cd28ee246be5bdc295bb8aff56c5d90400"
+    },
+    {
+      "originalCommit": "33ba9f331dfac15261d64f0365c6b20425121f6d",
+      "message": "Harden company messaging authorization and intake",
+      "exportedCommit": "4516b610c609564a428cf7a11627e4c8e97cd0e6"
+    },
+    {
+      "originalCommit": "bd2ea0b427bbefa40d536a4d5961eff4ad92887f",
+      "message": "Secure rejected intake acknowledgement and reply correlation",
+      "exportedCommit": "7cae500de387625f7208b77f0d4e604165645fc3"
+    },
+    {
+      "originalCommit": "46c4d8f4c9cc3162ec00d6e45dd1a25ec95f7062",
+      "message": "Integrate company workroom and protected local channels",
+      "exportedCommit": "124a3a4f49f8481fc810d5e6a383d86b4754bdb7"
+    },
+    {
+      "originalCommit": "868ba2b7882b0f2019e6ac1a613e74c1f9521e74",
+      "message": "Document R6 acceptance, company fixtures and runtime provenance",
+      "exportedCommit": "7ea76b44660e4381b74a3e540debe2a09fdf4814"
+    },
+    {
+      "originalCommit": "79069907abe35162213377b21e5b9a0939e9dd18",
+      "message": "Guard company views and reviewed mail actions",
+      "exportedCommit": "beb5ab0fe00f4151447bbdde3a5b170db71cb437"
+    },
+    {
+      "originalCommit": "2dfac14091e5bc710190947ffd128ea1e16e5da7",
+      "message": "Add R6 recovery and isolated offline startup foundations",
+      "exportedCommit": "0652b6e73481d0bf0edcad14e1a5162b7f69e683"
+    },
+    {
+      "originalCommit": "311b033b21212dc0989c8c6c797596926355370c",
+      "message": "Journal interrupted migration and recover data and version",
+      "exportedCommit": "252a5129117c3433338a942e299992409799a68c"
+    },
+    {
+      "originalCommit": "2724eb34ebd14ebb9a069a0c7a011103ed34df82",
+      "message": "Supervise isolated Telegram with guarded drain",
+      "exportedCommit": "68d162efc179af2ca190e499bdf454fc88f88d5a"
+    },
+    {
+      "originalCommit": "4e4356624a6e16ff5dafdfd1f3380be2db3e3a29",
+      "message": "Expose protected backup and guard installer paths",
+      "exportedCommit": "1ab5770cab3b4e7bc0b5388957cbc6772f84e70b"
+    },
+    {
+      "originalCommit": "a384fda8267ff9f329e09cd166f0f60cf2fdcdea",
+      "message": "Drain active application requests before shutdown",
+      "exportedCommit": "7c0a1d5a7a5e9c54d1a014faa5ec86ee447d601a"
+    },
+    {
+      "originalCommit": "d7c104be159a0951f7103b84ea69de39727baa7d",
+      "message": "Reject linked backup manifests before restore",
+      "exportedCommit": "aee84e4f75c7bb6f1e74ef2a6125fc558dc28312"
+    },
+    {
+      "originalCommit": "368435abd14eafd33c53a59a5f6fdf168e81ce4e",
+      "message": "Require an explicit verified Adapter build",
+      "exportedCommit": "05bbadb993f4716d25a1d8f2777ac873281cd79b"
+    },
+    {
+      "originalCommit": "5c397bfc373b5843c0fc194efcc72a38cedc4531",
+      "message": "Align installer fixtures with manifest size checks",
+      "exportedCommit": "010d267d24c47a17ae9159f8873879dae287c7eb"
+    },
+    {
+      "originalCommit": "fafc238c548821028aade8b46f411e21eb8ee10f",
+      "message": "Allowlist packaged runtime and exclude private material",
+      "exportedCommit": "317d4b9bc5cbdaabc9e0ef8d05acb02257540105"
+    },
+    {
+      "originalCommit": "cacf10424db0fcdf707555c6026ca28a0f0f5b5a",
+      "message": "Verify recovery preserves all current cases",
+      "exportedCommit": "dd1ec06769c234453f494df1cc16f1107bd6ef58"
+    },
+    {
+      "originalCommit": "8acc87a3ead958ce604fd827a88a2bdace295dbb",
+      "message": "Configure owned Codex on explicit enable and fix status text",
+      "exportedCommit": "1298e5582d683dd112c46017cb09310e032b0e95"
+    },
+    {
+      "originalCommit": "058b209a8ebf6b06906c61f3714599dd2b813bc1",
+      "message": "Guard owned Adapter recovery and drain completion",
+      "exportedCommit": "6f8890c94619fc52c4df220072b1bc385dc0bab3"
+    },
+    {
+      "originalCommit": "470a8011e944eed560b882aca7d9b7f7493be951",
+      "message": "Confirm opened Gmail identity before staging",
+      "exportedCommit": "5cb69405c11f968ca44d9ca08afdd44a443ebc98"
+    },
+    {
+      "originalCommit": "3e9bd5f611f51062a02b362ee96724fe54aaf55d",
+      "message": "Fail closed on unknown Adapter profile and validate Codex home",
+      "exportedCommit": "51fac0dea1c6191f9ce230a25a86eb2e6693254c"
+    },
+    {
+      "originalCommit": "f82b50fec5e77a0fd5e97815660358c2e2d8ab99",
+      "message": "Cover simultaneous Gmail staging confirmation",
+      "exportedCommit": "554dec6d3f9d540901bc73daea419234b3c97812"
+    },
+    {
+      "originalCommit": "fb4bd7c1f7052d5a6216d22f36c9939f483e4ad5",
+      "message": "fix(modus): close intake privacy and human delivery gaps",
+      "exportedCommit": "bcb308560f482c3e2d8cff2014a1ba262f67c37c"
+    },
+    {
+      "originalCommit": "58a56eb9136f779b7b4ca6684f0a18d9474bae52",
+      "message": "Handle long setup temp paths and clean owned extraction",
+      "exportedCommit": "d23d7d9a668483f0e75012b4176fc69d74601276"
+    },
+    {
+      "originalCommit": "dd76ea0d2992ce369be40d7b0e3e001dabc5b511",
+      "message": "Align shared advice prompt with validation contract",
+      "exportedCommit": "b24454a3f45beb63ab36e327c8d21d12037319c4"
+    },
+    {
+      "originalCommit": "9c67eb99be21ae8589c7224fb1a6f4bd1f0f3c9e",
+      "message": "Add durable case attention lifecycle",
+      "exportedCommit": "2073c3e69309b2ea521c50ec1e2086028c704116"
+    },
+    {
+      "originalCommit": "a34a7ce7a251de6d1ec6821350d2945a76510395",
+      "message": "Verify attention delivery races and report scheduler failures",
+      "exportedCommit": "0cd482cf1008bb4d5e7734cd97354c91d8e147b3"
+    },
+    {
+      "originalCommit": "4f804b48f753fd6c9e027a2398f74fd9b8db87d7",
+      "message": "Guard plan revisions and freeze delivery evidence",
+      "exportedCommit": "2f29c34ac51461adeaf36d5d2fe46a05957839f0"
+    },
+    {
+      "originalCommit": "3726422a45d04dc170f2445c0b7916a16d0b9e13",
+      "message": "Add scoped messenger progress and asynchronous sessions",
+      "exportedCommit": "f8d8ce8d99623846115352b38c1f1827425b358e"
+    },
+    {
+      "originalCommit": "187b79573c700d8206c16d9de163f8be7d4f2778",
+      "message": "Fix messenger fairness and rights recovery races",
+      "exportedCommit": "19e4c656a2e62d8aad22e378e43149781e70dab7"
+    },
+    {
+      "originalCommit": "975be5ee93a18002009dc17c046fff2fc4e6b9f3",
+      "message": "Wire case attention into company and workroom flows",
+      "exportedCommit": "e5b5a9806e08c5c72fc6194d7601bd722447e111"
+    },
+    {
+      "originalCommit": "f10e898e09f59aefa4104c4639bbc9f318f35cfb",
+      "message": "Cover full synthetic attention browser journey",
+      "exportedCommit": "8a1ff894e732d593d24ffc34b37952bf74f80f32"
+    },
+    {
+      "originalCommit": "23a5d23dbd916acaa97bfc832ff1b3128647bda0",
+      "message": "Document attentive workflow and acceptance scope",
+      "exportedCommit": "8bc90ce2e58a638356be48ab6644a2d2dd661a41"
+    },
+    {
+      "originalCommit": "f757523f31d73d227daf422ba8ea45b6a2839a66",
+      "message": "Fix repeat attention settings and shared progress view",
+      "exportedCommit": "24317845faa43ef6fbf4b3ae61c61e38b2716055"
+    },
+    {
+      "originalCommit": "888483e98b62da510e9339af9e8646bc3a266bbc",
+      "message": "Fix progress authorization and AI context freshness",
+      "exportedCommit": "50a5c3f7fb9a3e733b4e3530519821bd3aab8fe1"
+    },
+    {
+      "originalCommit": "5c3f4376306645cc22eb9a5e864148b62669d4a5",
+      "message": "fix(modus): anchor concise advice to current card state",
+      "exportedCommit": "189cd8dd20e43228bd389e13ee38ce5506654678"
+    },
+    {
+      "originalCommit": "e3bb5563a15debb8b5dd8fe7d151d455424db588",
+      "message": "feat(modus): focus role workflow and preserve exact reminder units",
+      "exportedCommit": "1bbcfdaa64d07be99c5f53a515d0a96c07b85d8f"
+    },
+    {
+      "originalCommit": "ab99e5620b4c15e4793f81962ff1b5430df86470",
+      "message": "fix(modus): retain expanded discussion details during polling",
+      "exportedCommit": "3c139a3b5359a48eefda59859a5a01ec7191ffdc"
+    },
+    {
+      "originalCommit": "dbd5af4b8039bef8bb97e903b5db1b77d5d17b7c",
+      "message": "fix(modus): parse reminder intervals exactly and reject scalar lists",
+      "exportedCommit": "ec7307287164779adc8cc433f7bbd7dfbec1c985"
+    },
+    {
+      "originalCommit": "961401979958a3bed133b225e5665aa601ace66c",
+      "message": "fix(modus): align structured workflow summaries and accepted plan controls",
+      "exportedCommit": "dc168303d3bdd9d1f953597d8d2a0d6568e8e91c"
+    },
+    {
+      "originalCommit": "f516d8b869b337202a6d63918fdbd62959fc8757",
+      "message": "Refine MODUS design after Claude review and preserve closed-case history",
+      "exportedCommit": "de583b5f6bf88bb1a6268ef9f5baad6e560618aa"
+    },
+    {
+      "originalCommit": "e17db72f6baf217c85c91018cdc063838b711102",
+      "message": "Finish Claude review: compact mobile state, personal guidance and unobscured settings",
+      "exportedCommit": "f6c10ff5355c879cde36805608c19f6b7921a0ad"
+    },
+    {
+      "originalCommit": "ab11ca7046d6117c5754e3588afb0c747bf9d351",
+      "message": "feat(modus): attach and review files in shared case discussions",
+      "exportedCommit": "9f920cc549b7df0efade22594a43f1bd14e29873"
+    }
+  ]
+}

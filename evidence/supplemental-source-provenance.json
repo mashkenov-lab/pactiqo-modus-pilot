@@ -1,0 +1,36 @@
+{
+  "sourceHead": "ab11ca7046d6117c5754e3588afb0c747bf9d351",
+  "reason": "Six unchanged static legacy UI files needed by source server/workflow tests; not present in the source ZIP. No production data.",
+  "files": [
+    {
+      "path": "public/app.js",
+      "bytes": 24463,
+      "sha256": "4c2a256ae383895b0f8f23230ec9c37d3e93fde480043bd3ee8db25aaf918cb9"
+    },
+    {
+      "path": "public/communications.css",
+      "bytes": 3821,
+      "sha256": "17e1c23979c001ece9ffc1190f102fad742fd14004659a8d7150ba1713bfc733"
+    },
+    {
+      "path": "public/communications.js",
+      "bytes": 15397,
+      "sha256": "f52eb8ddfd23ef7266a68403293f43d96a08ffce04d201fa359a620e3615d21f"
+    },
+    {
+      "path": "public/demo-desk.json",
+      "bytes": 828,
+      "sha256": "3fda23a064b01eb34e13891e03c15362835fe487c28c28b04be404a8470f84b8"
+    },
+    {
+      "path": "public/index.html",
+      "bytes": 593,
+      "sha256": "690fa4985bc0975c6dfa2d2b9a28d8d247d793ebeb40e6b62c6c81374b2d15a9"
+    },
+    {
+      "path": "public/styles.css",
+      "bytes": 10586,
+      "sha256": "c09dc2d371ec383325f4407f9762688d1b7711b404378b6c591769bd69824931"
+    }
+  ]
+}

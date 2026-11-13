@@ -1,0 +1,14 @@
+/demo-data/
+/evidence/local-*.json
+/evidence/local-*.log
+node_modules/
+.env
+.env.*
+ACCESS.txt
+accounts.json
+workspace.json
+workspace.json.bak
+*.exe
+*.mp4
+*.log
+.DS_Store

@@ -1,0 +1,1 @@
+Reviewable source snapshot. Matching immutable Windows Setup supplies verified runtime binaries. No personal profiles, account files, mail contents, operational evidence, or Git history are included. Tests use local synthetic fixtures; machine-specific browser/runtime paths may need configuration. This archive does not prove deployment or real channel acceptance.

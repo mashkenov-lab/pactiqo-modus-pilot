@@ -1,0 +1,20 @@
+{
+  "checkedAt": "2026-11-13T06:36:22.754381+00:00",
+  "upstreamHead": "ab11ca7046d6117c5754e3588afb0c747bf9d351",
+  "scope": "all exported blobs and commit messages from exact source allowlist",
+  "allowedPaths": 188,
+  "exportedCommits": 52,
+  "uniqueBlobs": 440,
+  "exportBytes": 12765614,
+  "patterns": [
+    "github-token",
+    "openai-token",
+    "telegram-token",
+    "private-key",
+    "aws-key",
+    "slack-token",
+    "google-key"
+  ],
+  "findings": [],
+  "limitation": "Bounded common credential-format scan plus explicit path allowlist. Not proof that arbitrary unknown secret formats cannot exist."
+}

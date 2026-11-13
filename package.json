@@ -1,0 +1,13 @@
+{
+  "name": "pactiqo-modus-pilot",
+  "version": "4.0.0-b8-pilot.1",
+  "private": true,
+  "description": "Конкурсный исходный пакет MODUS: локальный MVP и 20 учебных сценариев",
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "start": "node scripts/start-demo.cjs",
+    "test": "node scripts/test-core.cjs",
+    "selfcheck": "node scripts/selfcheck.cjs",
+    "verify:source": "node scripts/verify-source.cjs"
+  }
+}
